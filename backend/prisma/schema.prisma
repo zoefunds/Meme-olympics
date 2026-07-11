@@ -1,0 +1,121 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                  String       @id @default(cuid())
+  email               String       @unique
+  username            String       @unique
+  passwordHash        String
+  // Custodial GenLayer/EVM wallet — permanently linked, survives devices.
+  walletAddress       String       @unique
+  // AES-256-GCM ciphertext (iv:tag:data, hex) under WALLET_ENCRYPTION_KEY.
+  encryptedPrivateKey String
+  role                String       @default("user") // user | admin
+  emailVerified       Boolean      @default(false)
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+  submissions         Submission[]
+  disputes            Dispute[]
+  resetTokens         PasswordResetToken[]
+  notifications       NotificationLog[]
+
+  @@index([email])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Competition {
+  id              String       @id // e.g. week-2026-28 (matches on-chain id)
+  title           String
+  theme           String
+  status          String       @default("created") // created|open|judging|finalized|cancelled
+  startsAt        DateTime
+  endsAt          DateTime
+  onchainCreated  Boolean      @default(false)
+  onchainFinalized Boolean     @default(false)
+  winnersJson     String       @default("[]")
+  createdAt       DateTime     @default(now())
+  submissions     Submission[]
+
+  @@index([status])
+}
+
+model Submission {
+  id                   String      @id @default(cuid())
+  competitionId        String
+  userId               String
+  title                String
+  caption              String      @default("")
+  imageUrl             String
+  contextUrl           String      @default("")
+  tagsJson             String      @default("[]")
+  status               String      @default("pending") // pending|onchain|evaluated|disqualified|winner|failed
+  onchainTxHash        String      @default("")
+  totalScore           Int         @default(0)
+  criteriaJson         String      @default("{}")
+  plagiarismVerdict    String      @default("")
+  plagiarismConfidence Int         @default(0)
+  evaluationSummary    String      @default("")
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+  competition          Competition @relation(fields: [competitionId], references: [id])
+  user                 User        @relation(fields: [userId], references: [id])
+  disputes             Dispute[]
+
+  @@index([competitionId, status])
+  @@index([userId])
+}
+
+model Dispute {
+  id           String     @id @default(cuid())
+  submissionId String
+  userId       String
+  reason       String
+  evidenceUrl  String
+  status       String     @default("open") // open|upheld|rejected
+  verdict      String     @default("")
+  createdAt    DateTime   @default(now())
+  resolvedAt   DateTime?
+  submission   Submission @relation(fields: [submissionId], references: [id])
+  user         User       @relation(fields: [userId], references: [id])
+
+  @@index([submissionId])
+}
+
+model NotificationLog {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String
+  subject   String
+  status    String   @default("sent")
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model AuditEvent {
+  id        String   @id @default(cuid())
+  actor     String
+  action    String
+  detail    String   @default("")
+  createdAt DateTime @default(now())
+
+  @@index([action, createdAt])
+}

@@ -1,0 +1,84 @@
+"use client";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { api, getUser } from "@/lib/api";
+import { GlassCard, MonoLabel, StatusChip } from "@/components/ui";
+
+type Rewards = {
+  walletAddress: string;
+  onchainBalance: number;
+  onchainBalanceAtto: string;
+  wins: Array<{
+    submissionId: string;
+    title: string;
+    imageUrl: string;
+    score: number;
+    competition: { id: string; title: string };
+  }>;
+};
+
+export default function RewardsPage() {
+  const router = useRouter();
+  const [data, setData] = useState<Rewards | null>(null);
+
+  useEffect(() => {
+    if (!getUser()) return router.push("/login");
+    api<Rewards>("/api/rewards/me").then(setData).catch(() => undefined);
+  }, [router]);
+
+  return (
+    <main className="px-4 md:px-12 py-8 max-w-arena mx-auto space-y-10">
+      <header>
+        <MonoLabel className="text-gold-dim tracking-[0.2em] block mb-2">Prize Vault</MonoLabel>
+        <h1 className="font-display font-bold text-4xl md:text-5xl">REWARDS</h1>
+      </header>
+
+      <GlassCard className="p-8 md:p-12 border-gold/20 prestige-glow" scan>
+        <div className="flex flex-col md:flex-row justify-between gap-8 items-start md:items-center">
+          <div>
+            <MonoLabel>On-chain Reward Balance</MonoLabel>
+            <div className="font-display font-bold text-6xl text-gold mt-2">
+              {data ? data.onchainBalance.toLocaleString() : "—"}
+              <span className="text-2xl text-on-variant ml-2">PTS</span>
+            </div>
+            <p className="font-mono text-[11px] text-on-variant mt-3 break-all">
+              Settled to {data?.walletAddress || "your wallet"} by the intelligent contract
+            </p>
+          </div>
+          <StatusChip label="GenLayer settled" tone="gold" />
+        </div>
+      </GlassCard>
+
+      <section>
+        <h2 className="font-display font-semibold text-2xl mb-6 uppercase">Winning Entries</h2>
+        {!data || data.wins.length === 0 ? (
+          <GlassCard className="p-12 text-center">
+            <p className="font-mono text-sm text-on-variant">
+              No podium finishes yet. The validators await your best work —{" "}
+              <Link href="/submit" className="text-gold-soft">submit a meme →</Link>
+            </p>
+          </GlassCard>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {data.wins.map((w) => (
+              <GlassCard key={w.submissionId} className="border-gold-dim/30">
+                <div className="h-48 overflow-hidden">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={w.imageUrl} alt={w.title} className="w-full h-full object-cover" />
+                </div>
+                <div className="p-5">
+                  <p className="font-display font-semibold text-lg">🥇 {w.title}</p>
+                  <div className="receipt-divider mt-3 pt-3 flex justify-between font-mono text-xs">
+                    <span className="text-on-variant">{w.competition.title}</span>
+                    <span className="text-gold-dim">{w.score}/100</span>
+                  </div>
+                </div>
+              </GlassCard>
+            ))}
+          </div>
+        )}
+      </section>
+    </main>
+  );
+}
