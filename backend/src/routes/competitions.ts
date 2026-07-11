@@ -1,9 +1,81 @@
-import { Router } from "express";
+import { Router, Response } from "express";
+import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { cacheGet, cacheSet } from "../lib/redis";
+import { requireAuth, AuthedRequest } from "../middleware/auth";
+import { limit } from "../middleware/rateLimit";
 import * as gl from "../services/genlayer";
+import { logger } from "../lib/logger";
 
 export const competitionsRouter = Router();
+
+// POST /api/competitions — OPEN TO ALL signed-in users: anyone can host an
+// arena. The operator relays the on-chain creation; capped per user.
+competitionsRouter.post(
+  "/",
+  requireAuth,
+  limit("create-comp", 3, 86400),
+  async (req: AuthedRequest, res: Response) => {
+    const schema = z.object({
+      title: z.string().min(3).max(120),
+      theme: z.string().max(600).default(""),
+      endsAt: z.string().refine((s) => !isNaN(Date.parse(s)), "Invalid date"),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0].message });
+    }
+    const { title, theme, endsAt } = parsed.data;
+    if (new Date(endsAt) <= new Date()) {
+      return res.status(400).json({ error: "End date must be in the future" });
+    }
+
+    // Derive a unique slug id from the title.
+    const base = title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40) || "arena";
+    let id = `arena-${base}`;
+    if (await prisma.competition.findUnique({ where: { id } })) {
+      id = `arena-${base}-${Date.now().toString(36)}`;
+    }
+
+    const comp = await prisma.competition.create({
+      data: {
+        id,
+        title,
+        theme,
+        status: "open",
+        startsAt: new Date(),
+        endsAt: new Date(endsAt),
+      },
+    });
+
+    if (gl.isChainConfigured()) {
+      try {
+        await gl.createCompetitionOnChain(
+          id,
+          title,
+          theme,
+          comp.startsAt.toISOString(),
+          comp.endsAt.toISOString()
+        );
+        await gl.openCompetitionOnChain(id);
+        await prisma.competition.update({
+          where: { id },
+          data: { onchainCreated: true },
+        });
+      } catch (err) {
+        logger.error(
+          { err: (err as Error).message, comp: id },
+          "on-chain competition creation failed (kept off-chain)"
+        );
+      }
+    }
+    return res.status(201).json({ competition: comp });
+  }
+);
 
 // GET /api/competitions — list (cached 120s)
 competitionsRouter.get("/", async (_req, res) => {

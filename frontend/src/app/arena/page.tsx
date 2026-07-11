@@ -95,6 +95,12 @@ export default function Arena() {
               >
                 Submit Meme
               </Link>
+              <Link
+                href="/competitions/new"
+                className="border border-white/20 bg-white/5 px-8 py-4 rounded-lg backdrop-blur-md font-display text-sm font-semibold uppercase tracking-widest hover:bg-white/10 transition-all inline-block"
+              >
+                Host an Arena
+              </Link>
             </div>
           </div>
           <div className="self-start bg-surface-highest/80 backdrop-blur-md border border-white/10 px-6 py-4 rounded-lg">

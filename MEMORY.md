@@ -45,7 +45,7 @@ votes. One serious project, one robust contract.
 
 ## Deployment status
 - [x] Repo: https://github.com/zoefunds/Meme-olympics (no Claude attribution)
-- [x] Contract deployed to StudioNet: `0x36E56eF5F7228A5523dBBfD690Fa48231d083323`
+- [x] Contract deployed to StudioNet: `0x1cFeBAe3792b56Ffb94cbDFF9B5d057f33C45903`
       (owner/deployer: 0x7401c129EDfc26E68FE19309fE461eb3Db1058Eb; verified via
       get_contract_info — v1.0.0, unpaused). Operator key must be the deployer's
       (set by user directly in Fly secrets, never in the repo).
