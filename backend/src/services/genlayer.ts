@@ -84,13 +84,26 @@ async function waitAccepted(client: GLClient, hash: string) {
   });
 }
 
+/** genlayer-js decodes calldata dicts as Maps — normalize to plain JSON. */
+function toPlain(value: any): any {
+  if (value instanceof Map) {
+    const obj: Record<string, any> = {};
+    for (const [k, v] of value) obj[String(k)] = toPlain(v);
+    return obj;
+  }
+  if (Array.isArray(value)) return value.map(toPlain);
+  if (typeof value === "bigint") return value.toString();
+  return value;
+}
+
 export async function readContract(functionName: string, args: any[] = []) {
   const client = await getOperatorClient();
-  return client.readContract({
+  const result = await client.readContract({
     address: contractAddress(),
     functionName,
     args,
   });
+  return toPlain(result);
 }
 
 async function writeAs(

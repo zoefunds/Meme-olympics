@@ -45,8 +45,11 @@ votes. One serious project, one robust contract.
 
 ## Deployment status
 - [x] Repo: https://github.com/zoefunds/Meme-olympics (no Claude attribution)
-- [ ] Contract deployed to StudioNet → set `GENLAYER_CONTRACT_ADDRESS` +
-      `GENLAYER_OPERATOR_PRIVATE_KEY` in Fly secrets (Phase 11)
+- [x] Contract deployed to StudioNet: `0x36E56eF5F7228A5523dBBfD690Fa48231d083323`
+      (owner/deployer: 0x7401c129EDfc26E68FE19309fE461eb3Db1058Eb; verified via
+      get_contract_info — v1.0.0, unpaused). Operator key must be the deployer's
+      (set by user directly in Fly secrets, never in the repo).
+      Note: genlayer-js readContract returns Maps → normalized in genlayer.ts toPlain().
 - [ ] Fly deploy (`cd backend && fly launch/deploy`, attach Postgres, set secrets)
 - [ ] Vercel deploy (`cd frontend && vercel --prod`, set NEXT_PUBLIC_API_URL)
 
