@@ -88,7 +88,7 @@ export async function runJudgingSweep() {
   if (!gl.isChainConfigured()) return { evaluated: 0, note: "chain not configured" };
 
   const pending = await prisma.submission.findMany({
-    where: { status: "onchain" },
+    where: { status: { in: ["pending", "onchain"] } },
     take: 10, // bounded batch: judging is LLM-heavy on-chain
     include: { user: true },
   });
@@ -96,7 +96,14 @@ export async function runJudgingSweep() {
   let evaluated = 0;
   for (const sub of pending) {
     try {
-      await gl.evaluateSubmissionOnChain(sub.id);
+      try {
+        await gl.evaluateSubmissionOnChain(sub.id);
+      } catch (err) {
+        // Idempotency: if a concurrent sweep (cron vs manual) already
+        // evaluated it on-chain, fall through and sync the result anyway.
+        const msg = (err as Error).message || "";
+        if (!/already processed|Submission is '/.test(msg)) throw err;
+      }
       const onchain = (await gl.getOnchainSubmission(sub.id)) as {
         status: string;
         total_score: number;
