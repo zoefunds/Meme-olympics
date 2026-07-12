@@ -1,0 +1,43 @@
+name: Uptime monitor
+
+on:
+  schedule:
+    - cron: "*/15 * * * *" # every 15 minutes
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check API health
+        id: api
+        run: |
+          code=$(curl -s -o /tmp/health.json -w "%{http_code}" --max-time 15 https://meme-olympics-api.fly.dev/health || echo "000")
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          cat /tmp/health.json 2>/dev/null || true
+          [ "$code" = "200" ]
+
+      - name: Check frontend
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 https://meme-olympics.vercel.app || echo "000")
+          [ "$code" = "200" ]
+
+      - name: Open issue on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = "🚨 Uptime check failed";
+            const open = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: "open", labels: "uptime",
+            });
+            if (open.data.some(i => i.title === title)) return;
+            await github.rest.issues.create({
+              owner: context.repo.owner, repo: context.repo.repo,
+              title, labels: ["uptime"],
+              body: `A scheduled health check failed at ${new Date().toISOString()}.\n\n- API: https://meme-olympics-api.fly.dev/health\n- Frontend: https://meme-olympics.vercel.app\n\nCheck \`fly logs -a meme-olympics-api\` and \`fly status -a meme-olympics-api\`.`,
+            });

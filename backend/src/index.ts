@@ -11,18 +11,21 @@ import { submissionsRouter } from "./routes/submissions";
 import { disputesRouter } from "./routes/disputes";
 import { rewardsRouter } from "./routes/rewards";
 import { adminRouter } from "./routes/admin";
+import { uploadsRouter, imagesRouter } from "./routes/uploads";
 import { startSchedulers, runWeeklyRollover } from "./jobs/weekly";
 
 const app = express();
 
-app.use(helmet());
+app.set("trust proxy", 1); // Fly proxy: correct req.protocol (https) and req.ip
+
+app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 app.use(
   cors({
     origin: [config.frontendUrl, /\.vercel\.app$/],
     credentials: false,
   })
 );
-app.use(express.json({ limit: "256kb" }));
+app.use(express.json({ limit: "6mb" })); // base64 image uploads
 app.use(
   pinoHttp({
     logger,
@@ -46,6 +49,20 @@ app.use("/api/submissions", submissionsRouter);
 app.use("/api/disputes", disputesRouter);
 app.use("/api/rewards", rewardsRouter);
 app.use("/api/admin", adminRouter);
+app.use("/api/uploads", uploadsRouter);
+app.use("/i", imagesRouter);
+
+// Public showcase: the current top judged meme — used by the landing page's
+// live "see how it was judged" link.
+app.get("/api/showcase", async (_req, res) => {
+  const top = await prisma.submission.findFirst({
+    where: { status: { in: ["winner", "evaluated"] } },
+    orderBy: [{ status: "desc" }, { totalScore: "desc" }],
+    select: { id: true, title: true, totalScore: true },
+  });
+  res.setHeader("Cache-Control", "public, max-age=300");
+  return res.json({ showcase: top });
+});
 
 // Central error handler — never leak internals.
 app.use(

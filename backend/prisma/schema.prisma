@@ -110,6 +110,16 @@ model NotificationLog {
   @@index([userId])
 }
 
+model Image {
+  id        String   @id @default(cuid())
+  userId    String
+  mime      String
+  data      Bytes
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
 model AuditEvent {
   id        String   @id @default(cuid())
   actor     String

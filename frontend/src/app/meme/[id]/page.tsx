@@ -2,8 +2,15 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { api } from "@/lib/api";
-import { GlassCard, MonoLabel, SegmentedBar, StatusChip } from "@/components/ui";
+import { api, getUser } from "@/lib/api";
+import {
+  GlassCard,
+  MonoLabel,
+  SegmentedBar,
+  StatusChip,
+  GhostButton,
+  PrestigeButton,
+} from "@/components/ui";
 
 /* Consensus Report — click-through from any meme card. Shows the full
    validator verdict: 9-criteria breakdown, plagiarism assessment, AI judging
@@ -55,6 +62,34 @@ export default function MemeDetail() {
   const params = useParams<{ id: string }>();
   const [sub, setSub] = useState<Sub | null>(null);
   const [error, setError] = useState("");
+  const [showDispute, setShowDispute] = useState(false);
+  const [dispute, setDispute] = useState({ reason: "", evidenceUrl: "" });
+  const [disputeMsg, setDisputeMsg] = useState("");
+  const [disputeBusy, setDisputeBusy] = useState(false);
+
+  async function submitDispute(e: React.FormEvent) {
+    e.preventDefault();
+    setDisputeBusy(true);
+    setDisputeMsg("");
+    try {
+      await api("/api/disputes", {
+        method: "POST",
+        body: JSON.stringify({
+          submissionId: sub!.id,
+          reason: dispute.reason,
+          evidenceUrl: dispute.evidenceUrl,
+        }),
+      });
+      setDisputeMsg(
+        "Challenge filed. The contract will fetch your evidence on-chain and validators will rule on it."
+      );
+      setShowDispute(false);
+    } catch (err) {
+      setDisputeMsg((err as Error).message);
+    } finally {
+      setDisputeBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (!params?.id) return;
@@ -193,6 +228,70 @@ export default function MemeDetail() {
                   <span>Leader + independent validator re-judging (±15 tolerance)</span>
                 </div>
               </div>
+            </GlassCard>
+          )}
+
+          {/* Challenge / dispute — evidence-based, resolved on-chain */}
+          {["evaluated", "winner"].includes(sub.status) && (
+            <GlassCard className="p-6 border-danger/20">
+              {!showDispute ? (
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div>
+                    <h3 className="font-display font-semibold text-lg">Think this meme is stolen or misjudged?</h3>
+                    <p className="font-mono text-[11px] text-on-variant mt-1">
+                      Challenges need a public evidence URL — validators fetch
+                      it on-chain and rule. Words alone decide nothing.
+                    </p>
+                  </div>
+                  <GhostButton
+                    onClick={() =>
+                      getUser() ? setShowDispute(true) : (window.location.href = "/login")
+                    }
+                    className="whitespace-nowrap border-danger/40 hover:bg-danger/10"
+                  >
+                    ⚔ Challenge This Meme
+                  </GhostButton>
+                </div>
+              ) : (
+                <form onSubmit={submitDispute} className="space-y-5">
+                  <MonoLabel className="text-danger">DISPUTE PROTOCOL // EVIDENCE REQUIRED</MonoLabel>
+                  <div className="flex flex-col gap-2">
+                    <MonoLabel>Your claim (min 10 chars)</MonoLabel>
+                    <textarea
+                      className="terminal-input font-body resize-none"
+                      rows={3}
+                      minLength={10}
+                      maxLength={1000}
+                      required
+                      placeholder="e.g. This exact meme was posted on r/cryptocurrency two weeks before this competition…"
+                      value={dispute.reason}
+                      onChange={(e) => setDispute({ ...dispute, reason: e.target.value })}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <MonoLabel>Public evidence URL (fetched on-chain by validators)</MonoLabel>
+                    <input
+                      className="terminal-input font-mono text-sm"
+                      type="url"
+                      required
+                      placeholder="https://www.reddit.com/r/cryptocurrency/comments/…"
+                      value={dispute.evidenceUrl}
+                      onChange={(e) => setDispute({ ...dispute, evidenceUrl: e.target.value })}
+                    />
+                  </div>
+                  <div className="flex gap-3">
+                    <PrestigeButton type="submit" disabled={disputeBusy}>
+                      {disputeBusy ? "FILING ON-CHAIN…" : "File Challenge"}
+                    </PrestigeButton>
+                    <GhostButton type="button" onClick={() => setShowDispute(false)}>
+                      Cancel
+                    </GhostButton>
+                  </div>
+                </form>
+              )}
+              {disputeMsg && (
+                <p className="font-mono text-xs mt-4 text-cyan-soft">{disputeMsg}</p>
+              )}
             </GlassCard>
           )}
 

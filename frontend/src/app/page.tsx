@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { LogoMark } from "@/components/Logo";
+import { ShowcaseLink } from "@/components/Showcase";
 
 /* Landing — modelled on the landing-page prototype: hero with pulsing
    protocol status, "Death of Popularity" headline, evaluation model grid,
@@ -41,6 +42,7 @@ export default function Landing() {
               View Leaderboard
             </Link>
           </div>
+          <ShowcaseLink />
         </div>
         {/* Floating judged-card mockup */}
         <div className="hidden xl:block absolute right-12 top-16 w-80 glass-panel p-6 rounded-xl border-white/20 rotate-3 shadow-2xl">

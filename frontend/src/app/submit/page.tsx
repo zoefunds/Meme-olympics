@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, getUser } from "@/lib/api";
+import { api, getUser, API_URL } from "@/lib/api";
 import { GlassCard, MonoLabel, PrestigeButton, SegmentedBar } from "@/components/ui";
 
 /* Submit Entry — modelled on the Submit-Entry prototype: 3-step flow
@@ -21,6 +21,8 @@ export default function Submit() {
     tags: [] as string[],
   });
   const [tagInput, setTagInput] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [uploadErr, setUploadErr] = useState("");
   const [log, setLog] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -32,6 +34,32 @@ export default function Submit() {
       .then(setComp)
       .catch(() => setComp({ active: false }));
   }, [router]);
+
+  async function uploadFile(file: File) {
+    setUploadErr("");
+    if (file.size > 3 * 1024 * 1024) {
+      setUploadErr("Max file size is 3MB");
+      return;
+    }
+    setUploading(true);
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const res = await api<{ url: string }>("/api/uploads", {
+        method: "POST",
+        body: JSON.stringify({ dataUrl }),
+      });
+      setForm((f) => ({ ...f, imageUrl: res.url }));
+    } catch (err) {
+      setUploadErr((err as Error).message);
+    } finally {
+      setUploading(false);
+    }
+  }
 
   function addTag() {
     const t = tagInput.trim().replace(/^#/, "");
@@ -112,19 +140,40 @@ export default function Submit() {
             <div>
               <h2 className="font-display font-semibold text-2xl mb-2 text-purple-soft">SELECT YOUR ASSET</h2>
               <p className="text-on-variant text-sm mb-6">
-                Paste a public direct link to your meme image (Imgur, IPFS,
-                Catbox, your own host). The intelligent contract fetches this
-                URL on-chain to verify it exists — private links will be
-                disqualified.
+                Upload your meme (recommended — hosted on Arena infrastructure
+                that GenLayer validators can always reach) or paste a public
+                direct image URL. Validators fetch this image on-chain;
+                unreachable images get disqualified.
               </p>
+              <label className="cursor-pointer group block mb-6">
+                <div className="glass-panel border-dashed border-2 border-white/20 rounded-xl h-40 flex flex-col items-center justify-center hover:border-cyan-soft transition-all hover:bg-white/5">
+                  <span className="text-4xl mb-2">☁️</span>
+                  <MonoLabel className="group-hover:text-cyan-soft">
+                    {uploading ? "UPLOADING…" : "CLICK TO UPLOAD (PNG/JPG/GIF/WEBP, ≤3MB)"}
+                  </MonoLabel>
+                </div>
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/gif,image/webp"
+                  className="hidden"
+                  disabled={uploading}
+                  onChange={(e) => e.target.files?.[0] && uploadFile(e.target.files[0])}
+                />
+              </label>
+              {uploadErr && <p className="text-danger font-mono text-xs mb-4">{uploadErr}</p>}
               <div className="flex flex-col gap-2">
-                <MonoLabel>Image URL</MonoLabel>
+                <MonoLabel>…or paste a public image URL</MonoLabel>
                 <input
                   className="terminal-input font-mono text-sm"
-                  placeholder="https://i.imgur.com/your-meme.png"
-                  value={form.imageUrl}
+                  placeholder="https://files.catbox.moe/your-meme.png"
+                  value={form.imageUrl.startsWith(API_URL) ? "" : form.imageUrl}
                   onChange={(e) => setForm({ ...form, imageUrl: e.target.value })}
                 />
+                {form.imageUrl.startsWith(API_URL) && (
+                  <p className="font-mono text-[10px] text-cyan-soft">
+                    ✓ Uploaded to Arena hosting: {form.imageUrl}
+                  </p>
+                )}
               </div>
             </div>
             {form.imageUrl.startsWith("http") && (
