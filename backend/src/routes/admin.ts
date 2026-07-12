@@ -84,6 +84,25 @@ adminRouter.post("/judge-sweep", async (_req, res: Response) => {
   return res.json(result);
 });
 
+// POST /api/admin/mark-failed — maintenance: flag submissions the judging
+// sweep can never process (e.g. registered against a previous contract
+// deployment) so they stop being retried. Scoped by competition ids.
+adminRouter.post("/mark-failed", async (req, res: Response) => {
+  const schema = z.object({ competitionIds: z.array(z.string()).min(1).max(20) });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.issues[0].message });
+  }
+  const result = await prisma.submission.updateMany({
+    where: {
+      status: { in: ["pending", "onchain"] },
+      competitionId: { in: parsed.data.competitionIds },
+    },
+    data: { status: "failed" },
+  });
+  return res.json({ markedFailed: result.count });
+});
+
 // POST /api/admin/resolve-dispute/:id
 adminRouter.post("/resolve-dispute/:id", async (req, res: Response) => {
   if (!gl.isChainConfigured()) {

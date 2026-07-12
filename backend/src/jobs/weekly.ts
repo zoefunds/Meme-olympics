@@ -30,8 +30,11 @@ export async function runWeeklyRollover() {
   endsAt.setUTCDate(endsAt.getUTCDate() + ((8 - endsAt.getUTCDay()) % 7 || 7));
   endsAt.setUTCHours(0, 0, 0, 0);
 
-  // Move any open competition into judging.
-  const open = await prisma.competition.findMany({ where: { status: "open" } });
+  // Move only EXPIRED open competitions into judging — user-hosted arenas
+  // stay open until their own deadline.
+  const open = await prisma.competition.findMany({
+    where: { status: "open", endsAt: { lte: now } },
+  });
   for (const comp of open) {
     if (comp.id === newId) continue;
     await prisma.competition.update({
@@ -89,6 +92,7 @@ export async function runJudgingSweep() {
 
   const pending = await prisma.submission.findMany({
     where: { status: { in: ["pending", "onchain"] } },
+    orderBy: { createdAt: "desc" }, // newest first — stale rows can't starve the batch
     take: 10, // bounded batch: judging is LLM-heavy on-chain
     include: { user: true },
   });
@@ -96,15 +100,22 @@ export async function runJudgingSweep() {
   let evaluated = 0;
   for (const sub of pending) {
     try {
-      try {
+      // READ-BEFORE-ACT: never send a duplicate evaluate transaction.
+      // Only a genuinely un-judged on-chain submission gets an evaluate tx;
+      // anything already processed is synced without touching the chain.
+      let state = (await gl.getOnchainSubmission(sub.id)) as { status: string };
+      if (state.status === "pending") {
         await gl.evaluateSubmissionOnChain(sub.id);
-      } catch (err) {
-        // Idempotency: if a concurrent sweep (cron vs manual) already
-        // evaluated it on-chain, fall through and sync the result anyway.
-        const msg = (err as Error).message || "";
-        if (!/already processed|Submission is '/.test(msg)) throw err;
+        // Poll until the settled state is readable (accepted tx state can
+        // lag reads) so we never write a stale "pending" back to the DB.
+        for (let i = 0; i < 12; i++) {
+          state = (await gl.getOnchainSubmission(sub.id)) as { status: string };
+          if (state.status !== "pending") break;
+          await new Promise((r) => setTimeout(r, 5000));
+        }
       }
-      const onchain = (await gl.getOnchainSubmission(sub.id)) as {
+      if (state.status === "pending") continue; // still settling — next sweep
+      const onchain = state as {
         status: string;
         total_score: number;
         criteria: Record<string, number>;
@@ -133,10 +144,21 @@ export async function runJudgingSweep() {
         String(onchain.evaluation_summary || "")
       ).catch(() => undefined);
     } catch (err) {
-      logger.error(
-        { sub: sub.id, err: (err as Error).message },
-        "evaluation failed; will retry next sweep"
-      );
+      const msg = (err as Error).message || "";
+      // A row that never landed on-chain can't ever be judged — after 30
+      // minutes mark it failed instead of retrying forever.
+      if (
+        /Submission not found/.test(msg) &&
+        Date.now() - sub.createdAt.getTime() > 30 * 60 * 1000
+      ) {
+        await prisma.submission.update({
+          where: { id: sub.id },
+          data: { status: "failed" },
+        });
+        logger.warn({ sub: sub.id }, "marked failed: never registered on-chain");
+        continue;
+      }
+      logger.error({ sub: sub.id, err: msg }, "evaluation failed; will retry next sweep");
     }
   }
   return { evaluated };

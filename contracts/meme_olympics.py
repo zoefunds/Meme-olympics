@@ -218,10 +218,16 @@ class MemeOlympics(gl.Contract):
     # ==================================================================
     # Constructor
     # ==================================================================
-    def __init__(self):
-        self.owner = gl.message.sender_address
+    def __init__(self, owner_address: str = ""):
+        # Some deployment paths (RPC vs Studio UI) present a zero sender to
+        # the constructor, so an explicit owner may be passed; it falls back
+        # to the deploying sender when omitted.
+        if owner_address:
+            self.owner = Address(owner_address)
+        else:
+            self.owner = gl.message.sender_address
         self.paused = False
-        self.admins[self._addr_str(gl.message.sender_address)] = True
+        self.admins[self._addr_str(self.owner)] = True
 
         self.weights_json = json.dumps(DEFAULT_WEIGHTS_BP, sort_keys=True)
         self.default_winner_count = u256(3)
@@ -631,15 +637,8 @@ class MemeOlympics(gl.Contract):
             raise gl.vm.UserError(
                 f"{ERROR_EXPECTED} Competition is '{comp.status}', expected 'created'"
             )
-        # Move any previously active competition into judging.
-        if (
-            self.active_competition_id
-            and self.active_competition_id in self.competitions
-        ):
-            previous = self.competitions[self.active_competition_id]
-            if previous.status == COMP_STATUS_OPEN:
-                previous.status = COMP_STATUS_JUDGING
-                self._log("competition_judging", {"id": previous.id})
+        # Concurrent arenas are allowed: opening one never closes another.
+        # The active pointer is only a "featured" hint for UIs.
         comp.status = COMP_STATUS_OPEN
         self.active_competition_id = competition_id
         self._log("competition_opened", {"id": competition_id})

@@ -22,7 +22,7 @@ const submitSchema = z.object({
 submissionsRouter.post(
   "/",
   requireAuth,
-  limit("submit", 5, 3600),
+  limit("submit", 12, 3600),
   async (req: AuthedRequest, res: Response) => {
     const parsed = submitSchema.safeParse(req.body);
     if (!parsed.success) {

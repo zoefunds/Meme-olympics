@@ -76,12 +76,38 @@ export function isChainConfigured(): boolean {
 }
 
 async function waitAccepted(client: GLClient, hash: string) {
-  return client.waitForTransactionReceipt({
+  const receipt = await client.waitForTransactionReceipt({
     hash,
     status: "ACCEPTED",
     interval: 5000,
     retries: 60,
   });
+  // A GenLayer tx can be consensus-ACCEPTED while its execution errored
+  // (e.g. a UserError raised in the contract). Check the LEADER receipt only —
+  // idle-validator entries legitimately carry ERROR/cancellation records.
+  const anyReceipt = receipt as any;
+  let leader = anyReceipt?.consensus_data?.leader_receipt;
+  if (Array.isArray(leader)) leader = leader[0];
+  const execResult = leader?.execution_result ?? leader?.genvm_result?.status;
+  if (typeof execResult === "string" && execResult.toUpperCase() === "ERROR") {
+    const flat = JSON.stringify(leader, (_k, v) =>
+      typeof v === "bigint" ? v.toString() : v instanceof Map ? Object.fromEntries(v) : v
+    );
+    let detail = /\[(EXPECTED|EXTERNAL|TRANSIENT|LLM_ERROR)\][^"\\]{0,150}/.exec(flat)?.[0];
+    if (!detail && typeof leader?.result === "string") {
+      // Leader result is base64-encoded calldata; the error text is inside.
+      try {
+        const decoded = Buffer.from(leader.result, "base64").toString("utf8");
+        detail = /\[(EXPECTED|EXTERNAL|TRANSIENT|LLM_ERROR)\][^\n]{0,150}/.exec(decoded)?.[0];
+      } catch {
+        /* leave detail empty */
+      }
+    }
+    throw new Error(
+      `Transaction executed with ERROR${detail ? `: ${detail}` : ""} (${hash})`
+    );
+  }
+  return receipt;
 }
 
 /** genlayer-js decodes calldata dicts as Maps — normalize to plain JSON. */
