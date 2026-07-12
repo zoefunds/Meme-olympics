@@ -12,7 +12,8 @@ const STEPS = ["Asset", "Context", "Pre-Flight"];
 export default function Submit() {
   const router = useRouter();
   const [step, setStep] = useState(1);
-  const [comp, setComp] = useState<{ active: boolean; id?: string; title?: string } | null>(null);
+  const [arenas, setArenas] = useState<Array<{ id: string; title: string; status: string }>>([]);
+  const [compId, setCompId] = useState("");
   const [form, setForm] = useState({
     imageUrl: "",
     title: "",
@@ -30,9 +31,15 @@ export default function Submit() {
 
   useEffect(() => {
     if (!getUser()) router.push("/login");
-    api<{ active: boolean; id?: string; title?: string }>("/api/competitions/active")
-      .then(setComp)
-      .catch(() => setComp({ active: false }));
+    api<{ competitions: Array<{ id: string; title: string; status: string }> }>(
+      "/api/competitions"
+    )
+      .then((r) => {
+        const open = r.competitions.filter((c) => c.status === "open");
+        setArenas(open);
+        if (open[0]) setCompId(open[0].id);
+      })
+      .catch(() => setArenas([]));
   }, [router]);
 
   async function uploadFile(file: File) {
@@ -70,7 +77,7 @@ export default function Submit() {
   }
 
   async function submit() {
-    if (!comp?.id) return;
+    if (!compId) return;
     setBusy(true);
     setError("");
     const lines = [
@@ -85,7 +92,7 @@ export default function Submit() {
       await api("/api/submissions", {
         method: "POST",
         body: JSON.stringify({
-          competitionId: comp.id,
+          competitionId: compId,
           title: form.title,
           caption: form.caption,
           imageUrl: form.imageUrl,
@@ -110,7 +117,7 @@ export default function Submit() {
       <header className="mb-10">
         <h1 className="font-display font-bold text-4xl md:text-5xl mb-2 text-cream">SUBMIT MEME</h1>
         <p className="text-on-variant max-w-2xl">
-          Enter the arena{comp?.active ? ` — ${comp.title}` : ""}. Your submission
+          Enter the arena. Your submission
           will be judged by GenLayer validator consensus on originality,
           cultural relevance, humor and 6 more criteria.
         </p>
@@ -137,6 +144,21 @@ export default function Submit() {
         {/* Step 1: asset */}
         {step === 1 && (
           <div className="max-w-2xl mx-auto space-y-8">
+            <div className="flex flex-col gap-2">
+              <MonoLabel>Choose your arena ({arenas.length} open)</MonoLabel>
+              <select
+                className="terminal-input font-mono text-sm bg-surface-container [color-scheme:dark] cursor-pointer"
+                value={compId}
+                onChange={(e) => setCompId(e.target.value)}
+              >
+                {arenas.length === 0 && <option value="">No open arenas</option>}
+                {arenas.map((a) => (
+                  <option key={a.id} value={a.id} className="bg-surface-container">
+                    {a.title}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div>
               <h2 className="font-display font-semibold text-2xl mb-2 text-purple-soft">SELECT YOUR ASSET</h2>
               <p className="text-on-variant text-sm mb-6">
@@ -269,6 +291,7 @@ export default function Submit() {
               <div className="font-mono text-[10px] space-y-2 text-on-variant min-h-[200px]">
                 <div>&gt; Pre-flight checklist ready.</div>
                 <div className="text-cyan-soft">&gt; {form.tags.length} tags · title “{form.title}”</div>
+                <div className="text-gold-soft">&gt; Target arena: {arenas.find((a) => a.id === compId)?.title || "none selected"}</div>
                 <div>&gt; On submit: metadata locks on-chain, then validators judge 9 criteria + plagiarism.</div>
                 {log.map((l, i) => (
                   <div key={i} className={l.includes("ERROR") ? "text-danger" : l.includes("ACCEPTED") ? "text-gold-soft" : ""}>
@@ -306,10 +329,10 @@ export default function Submit() {
               ) : (
                 <button
                   onClick={submit}
-                  disabled={busy || !comp?.active}
+                  disabled={busy || !compId}
                   className="w-full py-5 bg-gradient-to-r from-gold-dim to-cream text-on-gold font-display font-semibold uppercase tracking-[0.2em] rounded shadow-[0_0_30px_rgba(233,196,0,0.2)] hover:shadow-[0_0_40px_rgba(233,196,0,0.4)] transition-all disabled:opacity-50"
                 >
-                  {busy ? "TRANSMITTING…" : comp?.active ? "SUBMIT TO ARENA ➤" : "NO OPEN COMPETITION"}
+                  {busy ? "TRANSMITTING…" : compId ? "SUBMIT TO ARENA ➤" : "NO OPEN COMPETITION"}
                 </button>
               )}
               <div className="flex justify-start">
