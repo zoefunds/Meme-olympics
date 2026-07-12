@@ -1,5 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { GlassCard, MonoLabel, StatusChip } from "@/components/ui";
 
@@ -19,6 +21,7 @@ type Entry = {
 };
 
 export default function Leaderboard() {
+  const router = useRouter();
   const [comps, setComps] = useState<Comp[]>([]);
   const [selected, setSelected] = useState<string>("");
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -73,9 +76,9 @@ export default function Leaderboard() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {podium.map((e) => (
+              <Link key={e.submissionId} href={`/meme/${e.submissionId}`} className="block">
               <GlassCard
-                key={e.submissionId}
-                className={`group ${e.rank === 1 ? "border-gold-dim/30 prestige-glow" : ""}`}
+                className={`group cursor-pointer ${e.rank === 1 ? "border-gold-dim/30 prestige-glow" : ""}`}
                 scan={e.rank === 1}
               >
                 <div
@@ -120,6 +123,7 @@ export default function Leaderboard() {
                   </div>
                 </div>
               </GlassCard>
+              </Link>
             ))}
           </div>
         )}
@@ -146,7 +150,11 @@ export default function Leaderboard() {
               </thead>
               <tbody>
                 {rest.map((e) => (
-                  <tr key={e.submissionId} className="border-b border-white/5 hover:bg-white/5 transition-all">
+                  <tr
+                    key={e.submissionId}
+                    onClick={() => router.push(`/meme/${e.submissionId}`)}
+                    className="border-b border-white/5 hover:bg-white/5 transition-all cursor-pointer"
+                  >
                     <td className="px-6 py-5 font-mono text-gold-soft">#{e.rank}</td>
                     <td className="px-6 py-5">
                       <div className="flex items-center gap-3">

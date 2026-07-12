@@ -133,7 +133,8 @@ export default function Arena() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
             {entries.map((e) => (
-              <GlassCard key={e.submissionId} className="group hover:border-cyan/50 transition-all duration-500">
+              <Link key={e.submissionId} href={`/meme/${e.submissionId}`} className="block">
+              <GlassCard className="group hover:border-cyan/50 transition-all duration-500 cursor-pointer">
                 <div className="relative h-64 overflow-hidden">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
@@ -171,6 +172,7 @@ export default function Arena() {
                   </div>
                 </div>
               </GlassCard>
+              </Link>
             ))}
           </div>
         )}

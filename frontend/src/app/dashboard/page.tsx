@@ -98,7 +98,8 @@ export default function Dashboard() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
             {subs.map((s) => (
-              <GlassCard key={s.id} className="group">
+              <Link key={s.id} href={`/meme/${s.id}`} className="block">
+              <GlassCard className="group cursor-pointer hover:border-cyan/40 transition-colors">
                 <div className="relative h-48 overflow-hidden">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={s.imageUrl} alt={s.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
@@ -138,6 +139,7 @@ export default function Dashboard() {
                   )}
                 </div>
               </GlassCard>
+              </Link>
             ))}
           </div>
         )}
