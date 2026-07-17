@@ -116,15 +116,17 @@ export default function Landing() {
             <div className="scanline-texture absolute inset-0" />
             <div className="relative z-10">
               <div className="inline-flex items-center gap-2 bg-gold-soft text-black px-3 py-1 rounded-full text-[10px] font-mono font-bold mb-4">
-                WEEKLY REWARD POOL
+                REAL GEN PRIZE POOLS
               </div>
               <h3 className="font-display font-bold text-5xl mb-4 text-gold">
-                1,000 PTS
+                Fund it. Win it. Claim it.
               </h3>
               <p className="text-on-variant max-w-md">
-                Weekly arena pool, split 50/30/20 across the podium. Winners
-                are selected by validator consensus and settled on-chain —
-                clawed back automatically if a plagiarism dispute is upheld.
+                Hosts fund arenas with real GEN straight from their own
+                wallet, split 50/30/20 across the podium. Winners are chosen
+                by validator consensus and pull their GEN directly from the
+                contract with a self-serve claim — a genuine on-chain value
+                transfer, not points.
               </p>
             </div>
           </div>

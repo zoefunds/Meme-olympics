@@ -135,21 +135,45 @@ export async function readContract(functionName: string, args: any[] = []) {
 async function writeAs(
   client: GLClient,
   functionName: string,
-  args: any[]
+  args: any[],
+  value: bigint = BigInt(0)
 ): Promise<string> {
   const hash = await client.writeContract({
     address: contractAddress(),
     functionName,
     args,
-    value: BigInt(0),
+    value,
   });
-  logger.info({ functionName, hash }, "genlayer tx sent");
+  logger.info({ functionName, hash, value: value.toString() }, "genlayer tx sent");
   await waitAccepted(client, hash as string);
   return hash as string;
 }
 
+/**
+ * Reads right after a write can lag the just-accepted state (same
+ * "accepted-but-not-yet-readable" behavior we already handle in the judging
+ * sweep). Poll until the predicate is satisfied or we give up.
+ */
+export async function readSettled<T>(
+  functionName: string,
+  args: any[],
+  isSettled: (v: T) => boolean,
+  retries = 8,
+  delayMs = 4000
+): Promise<T> {
+  let value = (await readContract(functionName, args)) as T;
+  for (let i = 0; i < retries && !isSettled(value); i++) {
+    await new Promise((r) => setTimeout(r, delayMs));
+    value = (await readContract(functionName, args)) as T;
+  }
+  return value;
+}
+
 // ---------- Operator (admin) transactions ----------
 
+/** Used only for the automated official weekly arena — always value=0.
+ * Anyone-hosted arenas go through createCompetitionAsUser instead so the
+ * real GEN prize pool comes from the actual host's own wallet. */
 export async function createCompetitionOnChain(
   id: string,
   title: string,
@@ -164,6 +188,50 @@ export async function createCompetitionOnChain(
     startsAt,
     endsAt,
   ]);
+}
+
+// ---------- User-signed value-transfer transactions ----------
+
+/** Creates a competition signed by the HOST's own wallet. `prizeAtto` (may
+ * be 0 for a prestige-only arena) is sent as real GEN value and becomes the
+ * competition's escrowed, on-chain prize pool. */
+export async function createCompetitionAsUser(
+  userPrivateKey: string,
+  id: string,
+  title: string,
+  theme: string,
+  startsAt: string,
+  endsAt: string,
+  prizeAtto: bigint
+): Promise<string> {
+  return writeAs(
+    await getUserClient(userPrivateKey),
+    "create_competition",
+    [id, title, theme, startsAt, endsAt],
+    prizeAtto
+  );
+}
+
+/** Anyone (host, sponsor, community member) can top up a competition's
+ * real GEN prize pool with their own wallet before it finalizes. */
+export async function fundCompetitionOnChain(
+  userPrivateKey: string,
+  competitionId: string,
+  amountAtto: bigint
+): Promise<string> {
+  return writeAs(
+    await getUserClient(userPrivateKey),
+    "fund_competition",
+    [competitionId],
+    amountAtto
+  );
+}
+
+/** Winner pulls their claimable GEN reward balance to their own wallet.
+ * This is a genuine on-chain native-currency transfer out of the contract's
+ * own escrowed balance, not an internal points ledger. */
+export async function claimRewardOnChain(userPrivateKey: string): Promise<string> {
+  return writeAs(await getUserClient(userPrivateKey), "claim_reward", []);
 }
 
 export async function openCompetitionOnChain(id: string): Promise<string> {

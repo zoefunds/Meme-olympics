@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, getUser } from "@/lib/api";
-import { GlassCard, MonoLabel, StatusChip } from "@/components/ui";
+import { GlassCard, MonoLabel, StatusChip, PrestigeButton } from "@/components/ui";
 
 type Rewards = {
   walletAddress: string;
@@ -21,11 +21,36 @@ type Rewards = {
 export default function RewardsPage() {
   const router = useRouter();
   const [data, setData] = useState<Rewards | null>(null);
+  const [claiming, setClaiming] = useState(false);
+  const [claimMsg, setClaimMsg] = useState("");
+
+  function load() {
+    api<Rewards>("/api/rewards/me").then(setData).catch(() => undefined);
+  }
 
   useEffect(() => {
     if (!getUser()) return router.push("/login");
-    api<Rewards>("/api/rewards/me").then(setData).catch(() => undefined);
+    load();
   }, [router]);
+
+  async function claim() {
+    setClaiming(true);
+    setClaimMsg("");
+    try {
+      const res = await api<{ claimedAtto: string }>("/api/rewards/claim", {
+        method: "POST",
+      });
+      const claimedGen = Number(BigInt(res.claimedAtto) / BigInt(10 ** 14)) / 10000;
+      setClaimMsg(
+        `✓ ${claimedGen.toLocaleString()} GEN sent to your wallet on-chain.`
+      );
+      load();
+    } catch (err) {
+      setClaimMsg((err as Error).message);
+    } finally {
+      setClaiming(false);
+    }
+  }
 
   return (
     <main className="px-4 md:px-12 py-8 max-w-arena mx-auto space-y-10">
@@ -37,17 +62,30 @@ export default function RewardsPage() {
       <GlassCard className="p-8 md:p-12 border-gold/20 prestige-glow" scan>
         <div className="flex flex-col md:flex-row justify-between gap-8 items-start md:items-center">
           <div>
-            <MonoLabel>On-chain Reward Balance</MonoLabel>
+            <MonoLabel>Claimable GEN Reward (real, on-chain)</MonoLabel>
             <div className="font-display font-bold text-6xl text-gold mt-2">
               {data ? data.onchainBalance.toLocaleString() : "—"}
-              <span className="text-2xl text-on-variant ml-2">PTS</span>
+              <span className="text-2xl text-on-variant ml-2">GEN</span>
             </div>
             <p className="font-mono text-[11px] text-on-variant mt-3 break-all">
-              Settled to {data?.walletAddress || "your wallet"} by the intelligent contract
+              Escrowed by the contract for {data?.walletAddress || "your wallet"}
             </p>
           </div>
-          <StatusChip label="GenLayer settled" tone="gold" />
+          <div className="flex flex-col items-end gap-3">
+            <StatusChip label="GenLayer settled" tone="gold" />
+            <PrestigeButton
+              disabled={claiming || !data || data.onchainBalance <= 0}
+              onClick={claim}
+            >
+              {claiming ? "CLAIMING…" : "Claim GEN"}
+            </PrestigeButton>
+          </div>
         </div>
+        {claimMsg && (
+          <p className="font-mono text-xs text-cyan-soft mt-6 receipt-divider pt-4">
+            {claimMsg}
+          </p>
+        )}
       </GlassCard>
 
       <section>

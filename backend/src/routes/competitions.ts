@@ -4,13 +4,18 @@ import { prisma } from "../lib/prisma";
 import { cacheGet, cacheSet } from "../lib/redis";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { limit } from "../middleware/rateLimit";
+import { decryptPrivateKey } from "../lib/walletCrypto";
 import * as gl from "../services/genlayer";
 import { logger } from "../lib/logger";
 
 export const competitionsRouter = Router();
 
+const ATTO = BigInt(10) ** BigInt(18);
+
 // POST /api/competitions — OPEN TO ALL signed-in users: anyone can host an
-// arena. The operator relays the on-chain creation; capped per user.
+// arena, signed and funded by their OWN wallet. `prizeGen` (optional, may be
+// 0 for a prestige-only arena) is sent as real GEN value with the creation
+// transaction and becomes the competition's escrowed, on-chain prize pool.
 competitionsRouter.post(
   "/",
   requireAuth,
@@ -20,12 +25,13 @@ competitionsRouter.post(
       title: z.string().min(3).max(120),
       theme: z.string().max(600).default(""),
       endsAt: z.string().refine((s) => !isNaN(Date.parse(s)), "Invalid date"),
+      prizeGen: z.number().min(0).max(1_000_000).default(0),
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.issues[0].message });
     }
-    const { title, theme, endsAt } = parsed.data;
+    const { title, theme, endsAt, prizeGen } = parsed.data;
     if (new Date(endsAt) <= new Date()) {
       return res.status(400).json({ error: "End date must be in the future" });
     }
@@ -41,6 +47,8 @@ competitionsRouter.post(
       id = `arena-${base}-${Date.now().toString(36)}`;
     }
 
+    const prizeAtto = BigInt(Math.round(prizeGen * 1e6)) * (ATTO / BigInt(1e6));
+
     const comp = await prisma.competition.create({
       data: {
         id,
@@ -49,17 +57,24 @@ competitionsRouter.post(
         status: "open",
         startsAt: new Date(),
         endsAt: new Date(endsAt),
+        createdByUserId: req.userId!,
+        prizeAtto: prizeAtto.toString(),
       },
     });
 
     if (gl.isChainConfigured()) {
       try {
-        await gl.createCompetitionOnChain(
+        const user = await prisma.user.findUnique({ where: { id: req.userId! } });
+        // Signed and funded by the HOST's own wallet — a genuine value
+        // transfer, not the backend operator paying on their behalf.
+        await gl.createCompetitionAsUser(
+          decryptPrivateKey(user!.encryptedPrivateKey),
           id,
           title,
           theme,
           comp.startsAt.toISOString(),
-          comp.endsAt.toISOString()
+          comp.endsAt.toISOString(),
+          prizeAtto
         );
         await gl.openCompetitionOnChain(id);
         await prisma.competition.update({
@@ -71,9 +86,54 @@ competitionsRouter.post(
           { err: (err as Error).message, comp: id },
           "on-chain competition creation failed (kept off-chain)"
         );
+        return res.status(502).json({
+          error:
+            "Could not fund/create this arena on-chain (check your wallet's GEN balance). " +
+            (err as Error).message,
+        });
       }
     }
     return res.status(201).json({ competition: comp });
+  }
+);
+
+// POST /api/competitions/:id/fund — anyone can top up an arena's real GEN
+// prize pool with their own wallet, any time before it finalizes.
+competitionsRouter.post(
+  "/:id/fund",
+  requireAuth,
+  limit("fund-comp", 10, 3600),
+  async (req: AuthedRequest, res: Response) => {
+    if (!gl.isChainConfigured()) {
+      return res.status(503).json({ error: "Contract not configured yet" });
+    }
+    const schema = z.object({ amountGen: z.number().positive().max(1_000_000) });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0].message });
+    }
+    const comp = await prisma.competition.findUnique({ where: { id: req.params.id } });
+    if (!comp) return res.status(404).json({ error: "Competition not found" });
+    if (["finalized", "cancelled"].includes(comp.status)) {
+      return res.status(400).json({ error: "This arena can no longer be funded" });
+    }
+    const amountAtto = BigInt(Math.round(parsed.data.amountGen * 1e6)) * (ATTO / BigInt(1e6));
+
+    try {
+      const user = await prisma.user.findUnique({ where: { id: req.userId! } });
+      await gl.fundCompetitionOnChain(
+        decryptPrivateKey(user!.encryptedPrivateKey),
+        comp.id,
+        amountAtto
+      );
+      const updated = await prisma.competition.update({
+        where: { id: comp.id },
+        data: { prizeAtto: (BigInt(comp.prizeAtto) + amountAtto).toString() },
+      });
+      return res.json({ competition: updated });
+    } catch (err) {
+      return res.status(502).json({ error: (err as Error).message });
+    }
   }
 );
 
@@ -119,6 +179,7 @@ competitionsRouter.get("/active", async (_req, res) => {
         startsAt: comp.startsAt,
         endsAt: comp.endsAt,
         submissionCount: comp._count.submissions,
+        prizeAtto: comp.prizeAtto,
       }
     : { active: false };
   await cacheSet("comps:active", JSON.stringify(payload), 60_000);

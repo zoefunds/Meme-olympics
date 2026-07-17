@@ -14,7 +14,14 @@ type Comp = {
   theme?: string;
   endsAt?: string;
   submissionCount?: number;
+  prizeAtto?: string;
 };
+
+function genAmount(atto?: string): string {
+  if (!atto) return "0";
+  const gen = Number(BigInt(atto) / BigInt(10 ** 14)) / 10000;
+  return gen.toLocaleString(undefined, { maximumFractionDigits: 4 });
+}
 type Entry = {
   rank: number;
   submissionId: string;
@@ -86,8 +93,10 @@ export default function Arena() {
             </p>
             <div className="flex flex-wrap gap-6 items-center">
               <div className="flex flex-col">
-                <MonoLabel>Weekly Prize Pool</MonoLabel>
-                <p className="font-display font-bold text-gold text-4xl">1,000 PTS</p>
+                <MonoLabel>Prize Pool (real GEN)</MonoLabel>
+                <p className="font-display font-bold text-gold text-4xl">
+                  {genAmount(comp?.prizeAtto)} <span className="text-xl text-on-variant">GEN</span>
+                </p>
               </div>
               <Link
                 href="/submit"

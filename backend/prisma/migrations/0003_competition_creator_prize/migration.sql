@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Competition" ADD COLUMN IF NOT EXISTS "createdByUserId" TEXT;
+ALTER TABLE "Competition" ADD COLUMN IF NOT EXISTS "prizeAtto" TEXT NOT NULL DEFAULT '0';

@@ -6,7 +6,7 @@ import { GlassCard, MonoLabel, PrestigeButton, TerminalField } from "@/component
 
 export default function NewCompetition() {
   const router = useRouter();
-  const [form, setForm] = useState({ title: "", theme: "", endsAt: "" });
+  const [form, setForm] = useState({ title: "", theme: "", endsAt: "", prizeGen: "" });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -25,6 +25,7 @@ export default function NewCompetition() {
           title: form.title,
           theme: form.theme,
           endsAt: new Date(form.endsAt).toISOString(),
+          prizeGen: form.prizeGen ? Number(form.prizeGen) : 0,
         }),
       });
       router.push("/arena");
@@ -45,9 +46,11 @@ export default function NewCompetition() {
           HOST AN ARENA
         </h1>
         <p className="text-on-variant mt-4">
-          Anyone can create a meme competition. You set the theme and deadline;
-          GenLayer validator consensus does the judging. Winners split the
-          reward pool 50/30/20.
+          Anyone can create a meme competition. You set the theme, deadline,
+          and — optionally — fund a real GEN prize pool straight from your
+          own wallet. GenLayer validator consensus does the judging. Winners
+          split the pool 50/30/20 and claim their GEN directly from the
+          contract.
         </p>
       </header>
       <GlassCard className="p-8 md:p-12" scan>
@@ -80,6 +83,23 @@ export default function NewCompetition() {
               onChange={(e) => setForm({ ...form, endsAt: e.target.value })}
               required
             />
+          </div>
+          <div className="flex flex-col gap-2">
+            <MonoLabel>Prize pool — GEN (optional, sent from your wallet)</MonoLabel>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              className="terminal-input font-mono text-sm"
+              placeholder="0 (prestige-only — no monetary prize)"
+              value={form.prizeGen}
+              onChange={(e) => setForm({ ...form, prizeGen: e.target.value })}
+            />
+            <p className="font-mono text-[10px] text-on-variant">
+              This amount is sent as a real GEN transaction from your custodial
+              wallet and escrowed by the contract. Leave blank/0 for a
+              ranking-only arena. Anyone (including you) can add more later.
+            </p>
           </div>
           {error && <p className="text-danger font-mono text-xs">{error}</p>}
           <PrestigeButton type="submit" disabled={busy} className="w-full py-4">

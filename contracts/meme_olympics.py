@@ -182,7 +182,6 @@ class MemeOlympics(gl.Contract):
     # Configuration
     weights_json: str                       # JSON {criterion: weight_bp}
     default_winner_count: u256
-    default_prize_pool_atto: u256
     min_seconds_between_submissions: u256   # advisory, enforced off-chain
     max_submissions_per_user: u256          # per competition
 
@@ -203,10 +202,15 @@ class MemeOlympics(gl.Contract):
     dispute_ids: DynArray[str]
     submission_dispute_count: TreeMap[str, u256]
 
-    # Rewards & users
+    # Rewards & users — reward_balances_atto is REAL, CLAIMABLE GEN (native
+    # token), escrowed in this contract's own balance. It is funded only by
+    # actual `value` sent to create_competition/fund_competition, and paid
+    # out only by claim_reward's on-chain transfer. It is not an internal
+    # points ledger.
     user_stats: TreeMap[str, UserStats]
     reward_balances_atto: TreeMap[str, u256]
-    total_rewards_distributed_atto: u256
+    total_rewards_distributed_atto: u256    # allocated to winners at finalize
+    total_rewards_claimed_atto: u256        # actually transferred out via claim_reward
 
     # Counters / audit
     total_competitions: u256
@@ -231,12 +235,12 @@ class MemeOlympics(gl.Contract):
 
         self.weights_json = json.dumps(DEFAULT_WEIGHTS_BP, sort_keys=True)
         self.default_winner_count = u256(3)
-        self.default_prize_pool_atto = u256(1000 * ATTO)
         self.min_seconds_between_submissions = u256(60)
         self.max_submissions_per_user = u256(3)
 
         self.active_competition_id = ""
         self.total_rewards_distributed_atto = u256(0)
+        self.total_rewards_claimed_atto = u256(0)
         self.total_competitions = u256(0)
         self.total_submissions = u256(0)
         self.total_evaluations = u256(0)
@@ -480,6 +484,21 @@ class MemeOlympics(gl.Contract):
     # Admin & configuration (deterministic writes)
     # ==================================================================
     @gl.public.write
+    def claim_initial_owner(self) -> None:
+        """One-time bootstrap for a known deployment quirk: some deploy
+        paths present a zero sender to the constructor (and/or drop
+        constructor args), leaving self.owner as the zero address. If that
+        happened, the first caller of this regular (non-constructor) method
+        becomes owner/admin — sender_address is reliable on ordinary calls.
+        A no-op safety door: rejected once a real owner already exists."""
+        zero = Address("0x0000000000000000000000000000000000000000")
+        if self.owner != zero:
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} Owner already set")
+        self.owner = gl.message.sender_address
+        self.admins[self._addr_str(self.owner)] = True
+        self._log("owner_claimed", {"owner": self._addr_str(self.owner)})
+
+    @gl.public.write
     def transfer_ownership(self, new_owner: str) -> None:
         self._require_owner()
         new_addr = Address(new_owner)
@@ -547,28 +566,26 @@ class MemeOlympics(gl.Contract):
         self._log("weights_updated", {})
 
     @gl.public.write
-    def set_competition_defaults(
-        self, winner_count: int, prize_pool_whole: int, max_per_user: int
-    ) -> None:
+    def set_competition_defaults(self, winner_count: int, max_per_user: int) -> None:
+        """Default winner count / per-user submission cap for NEW
+        competitions. Prize pools are no longer a config default — they are
+        real GEN, funded per-competition via create_competition's payable
+        value or fund_competition."""
         self._require_admin()
         if winner_count < 1 or winner_count > 25:
             raise gl.vm.UserError(f"{ERROR_EXPECTED} winner_count must be 1..25")
-        if prize_pool_whole < 0 or prize_pool_whole > 10**9:
-            raise gl.vm.UserError(f"{ERROR_EXPECTED} prize_pool out of range")
         if max_per_user < 1 or max_per_user > 20:
             raise gl.vm.UserError(f"{ERROR_EXPECTED} max_per_user must be 1..20")
         self.default_winner_count = u256(winner_count)
-        self.default_prize_pool_atto = u256(prize_pool_whole * ATTO)
         self.max_submissions_per_user = u256(max_per_user)
         self._log(
-            "defaults_updated",
-            {"winners": winner_count, "pool": prize_pool_whole, "mpu": max_per_user},
+            "defaults_updated", {"winners": winner_count, "mpu": max_per_user}
         )
 
     # ==================================================================
     # Competition lifecycle (deterministic writes)
     # ==================================================================
-    @gl.public.write
+    @gl.public.write.payable
     def create_competition(
         self,
         competition_id: str,
@@ -580,8 +597,13 @@ class MemeOlympics(gl.Contract):
         """Create a competition. OPEN TO ALL — anyone can host an arena.
         IDs are caller-supplied (e.g. 'week-2026-28') so the off-chain
         scheduler and the chain agree on naming without extra reads.
-        Anti-spam: non-admins are capped at 5 creations per account."""
+        Anti-spam: non-admins are capped at 5 creations per account.
+
+        PAYABLE: any GEN sent with this call becomes the competition's real,
+        escrowed prize pool (0 is valid — a prestige-only arena with no
+        monetary reward). Anyone can add more later via fund_competition."""
         self._require_not_paused()
+        funded = u256(int(gl.message.value))
         sender = self._sender()
         if not (sender in self.admins and self.admins[sender]):
             creator_key = f"created_by:{sender}"
@@ -614,7 +636,7 @@ class MemeOlympics(gl.Contract):
             status=COMP_STATUS_CREATED,
             starts_at=starts_at,
             ends_at=ends_at,
-            prize_pool_atto=self.default_prize_pool_atto,
+            prize_pool_atto=funded,
             winner_count=self.default_winner_count,
             submission_count=u256(0),
             created_by=self._sender(),
@@ -624,7 +646,29 @@ class MemeOlympics(gl.Contract):
         )
         self.competition_ids.append(competition_id)
         self.total_competitions = u256(int(self.total_competitions) + 1)
-        self._log("competition_created", {"id": competition_id})
+        self._log(
+            "competition_created",
+            {"id": competition_id, "funded_atto": int(funded)},
+        )
+
+    @gl.public.write.payable
+    def fund_competition(self, competition_id: str) -> None:
+        """Add GEN to a competition's real prize pool. Open to anyone —
+        the host, sponsors, or the community — as long as the arena hasn't
+        finalized or been cancelled yet."""
+        self._require_not_paused()
+        comp = self._get_competition(competition_id)
+        if comp.status in (COMP_STATUS_FINALIZED, COMP_STATUS_CANCELLED):
+            raise gl.vm.UserError(
+                f"{ERROR_EXPECTED} Competition '{comp.status}' can no longer be funded"
+            )
+        added = int(gl.message.value)
+        if added <= 0:
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} Must send GEN value to fund")
+        comp.prize_pool_atto = u256(int(comp.prize_pool_atto) + added)
+        self._log(
+            "competition_funded", {"id": competition_id, "added_atto": added}
+        )
 
     @gl.public.write
     def open_competition(self, competition_id: str) -> None:
@@ -1103,9 +1147,12 @@ Return ONLY a JSON object exactly like:
     @gl.public.write
     def finalize_competition(self, competition_id: str, finalized_at: str) -> None:
         """Deterministically rank evaluated submissions, select winners and
-        allocate reward points. No LLM/web calls — cannot fail consensus."""
-        self._require_admin()
+        allocate real GEN rewards (claimable via claim_reward). No LLM/web
+        calls — cannot fail consensus. Allowed for the competition's creator
+        or any admin, so hosts can end their own arena without waiting on
+        an admin."""
         comp = self._get_competition(competition_id)
+        self._require_creator_or_admin(comp)
         if comp.status != COMP_STATUS_JUDGING:
             raise gl.vm.UserError(
                 f"{ERROR_EXPECTED} Competition is '{comp.status}', expected 'judging'"
@@ -1186,6 +1233,44 @@ Return ONLY a JSON object exactly like:
         shares = [w * 10000 // total for w in weights]
         shares[0] += 10000 - sum(shares)  # dust to rank 1
         return shares
+
+    # ==================================================================
+    # Reward claims — REAL GEN value transfer, not an internal points ledger.
+    # ==================================================================
+    @gl.public.write
+    def claim_reward(self) -> None:
+        """Pull your full accumulated GEN reward balance out of the
+        contract's own escrowed funds, in one on-chain native transfer to
+        your own wallet. Self-serve: only the caller can claim their own
+        balance, and only what this contract actually holds.
+
+        Note: rewards accumulate across ALL competitions you've won. If a
+        plagiarism dispute is later upheld against a submission whose reward
+        you already claimed, the GEN cannot be recovered — on-chain value
+        transfers are irreversible, same as any other blockchain payout."""
+        self._require_not_paused()
+        sender = self._sender()
+        amount = (
+            int(self.reward_balances_atto[sender])
+            if sender in self.reward_balances_atto
+            else 0
+        )
+        if amount <= 0:
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} No claimable GEN reward")
+        if amount > int(self.balance):
+            # Should never happen if funding/accounting stayed consistent;
+            # fail safe rather than attempt a transfer the contract can't cover.
+            raise gl.vm.UserError(
+                f"{ERROR_EXPECTED} Contract balance insufficient for claim"
+            )
+        # Checks-effects-interactions: zero the claimable balance BEFORE
+        # sending value out, so a re-entrant or repeated claim call sees 0.
+        self.reward_balances_atto[sender] = u256(0)
+        gl.get_contract_at(Address(sender)).emit(value=u256(amount)).emit_transfer()
+        self.total_rewards_claimed_atto = u256(
+            int(self.total_rewards_claimed_atto) + amount
+        )
+        self._log("reward_claimed", {"addr": sender, "amount_atto": amount})
 
     # ==================================================================
     # Disputes — evidence-based, contract-side web verification
@@ -1423,7 +1508,13 @@ Return ONLY JSON: {{"uphold": true/false, "confidence": 0-100, "summary": "1-2 s
         )
 
     def _claw_back_reward(self, sub: Submission) -> None:
-        """Remove a disqualified winner's reward from balances (deterministic)."""
+        """Remove a disqualified winner's reward from balances (deterministic).
+
+        Limitation: this only reduces the CLAIMABLE ledger. If the winner
+        already called claim_reward and the real GEN already left the
+        contract, that transfer cannot be reversed — the balance is bounded
+        at 0 rather than going negative. This mirrors any blockchain payout:
+        on-chain transfers are irreversible once sent."""
         comp = self._get_competition(sub.competition_id)
         try:
             winners = json.loads(comp.winners_json)
@@ -1467,6 +1558,8 @@ Return ONLY JSON: {{"uphold": true/false, "confidence": 0-100, "summary": "1-2 s
             "total_rewards_distributed_atto": str(
                 int(self.total_rewards_distributed_atto)
             ),
+            "total_rewards_claimed_atto": str(int(self.total_rewards_claimed_atto)),
+            "contract_gen_balance_atto": str(int(self.balance)),
             "criteria": list(CRITERIA),
         }
 
@@ -1475,7 +1568,6 @@ Return ONLY JSON: {{"uphold": true/false, "confidence": 0-100, "summary": "1-2 s
         return {
             "weights_bp": self._get_weights(),
             "default_winner_count": int(self.default_winner_count),
-            "default_prize_pool_atto": str(int(self.default_prize_pool_atto)),
             "max_submissions_per_user": int(self.max_submissions_per_user),
             "max_submissions_per_competition": MAX_SUBMISSIONS_PER_COMPETITION,
             "score_tolerance": SCORE_TOLERANCE,

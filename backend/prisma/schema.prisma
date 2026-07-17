@@ -50,6 +50,8 @@ model Competition {
   onchainCreated  Boolean      @default(false)
   onchainFinalized Boolean     @default(false)
   winnersJson     String       @default("[]")
+  createdByUserId String?
+  prizeAtto       String       @default("0") // real escrowed GEN, atto-scale (mirrors on-chain prize_pool_atto)
   createdAt       DateTime     @default(now())
   submissions     Submission[]
 
