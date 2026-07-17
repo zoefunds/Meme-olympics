@@ -45,17 +45,73 @@ votes. One serious project, one robust contract.
 
 ## Deployment status
 - [x] Repo: https://github.com/zoefunds/Meme-olympics (no Claude attribution)
-- [x] Contract deployed to StudioNet: `0xC31D62f39916b99d9f2fE036351898407E0C9224`
-      (owner/deployer: 0x7401c129EDfc26E68FE19309fE461eb3Db1058Eb; verified via
-      get_contract_info — v1.0.0, unpaused). Operator key must be the deployer's
-      (set by user directly in Fly secrets, never in the repo).
-      Note: genlayer-js readContract returns Maps → normalized in genlayer.ts toPlain().
-- [ ] Fly deploy (`cd backend && fly launch/deploy`, attach Postgres, set secrets)
-- [ ] Vercel deploy (`cd frontend && vercel --prod`, set NEXT_PUBLIC_API_URL)
+- [x] Contract deployed to StudioNet (CURRENT): `0x9F64636ba66ae1e893AA436A6B94dbA4706052Ee`
+      (owner/deployer: 0x7401c129EDfc26E68FE19309fE461eb3Db1058Eb, deployed via
+      Studio UI so sender resolved correctly; verified via get_contract_info).
+      Now supports REAL GEN value transfer (see below), creator-can-finalize,
+      and permissionless competition creation/funding.
+      Prior addresses (superseded, kept for history): 0x36E5...3323, 0x1cFe...5903,
+      0xC31D...9224 — each redeployed to clear test-data error states or add features.
+- [x] Fly deploy live at meme-olympics-api.fly.dev, GENLAYER_CONTRACT_ADDRESS
+      updated to the current address above.
+- [x] Vercel deploy live at meme-olympics.vercel.app.
+- [ ] **Outstanding on every fresh contract deploy**: contract owner must call
+      `add_admin(<backend operator address>)` in Studio before automated
+      judging-sweep/finalization crons can act (backend operator key persists
+      across deploys — the SAME address needs re-granting admin each time the
+      contract address changes). Current backend operator: `0x4A6666C015BE347799E0B25cfE27bfd3847027BB`.
+
+## Real GEN value transfer (added — read before touching money paths)
+- Contract methods: `create_competition` and `fund_competition` are
+  `@gl.public.write.payable` — GEN sent as tx `value` becomes/adds-to that
+  competition's real escrowed `prize_pool_atto` (the contract's own native
+  balance backs it, readable via `self.balance` / `get_contract_info().contract_gen_balance_atto`).
+  `claim_reward()` is self-serve: caller pulls their full `reward_balances_atto`
+  to their own wallet via a genuine on-chain transfer.
+- **Confirmed working call pattern on THIS pinned runner** (validated via a
+  throwaway test contract before touching production — see below): outbound
+  transfer is `gl.get_contract_at(Address(to)).emit(value=u256(amount)).emit_transfer()`
+  — NOT `.emit_transfer(value)` as the newest genvm main-branch docs show
+  (that form raises `TypeError: emit_transfer() takes 1 positional argument
+  but 2 were given` on the pinned runner). The genvm GitHub repo is often
+  AHEAD of what `py-genlayer:1jb45aa8...` actually ships — don't trust its
+  docstrings for calling conventions without a live test.
+- Backend signs `create_competition`/`fund_competition`/`claim_reward` with
+  the REQUESTING USER's own decrypted custodial key (not the operator) — real
+  money moves from/to the person who owns it. `services/genlayer.ts` has
+  `createCompetitionAsUser`, `fundCompetitionOnChain`, `claimRewardOnChain`.
+- `finalize_competition`/`close_submissions` now allow creator-OR-admin (not
+  admin-only) — `_require_creator_or_admin(comp)` — so any host can end their
+  own arena without waiting on an admin, per explicit user request.
+- **Known deploy-time quirk**: some deploy paths (raw RPC via genlayer-js,
+  NOT the Studio UI) present a zero `gl.message.sender_address` to `__init__`
+  AND silently drop constructor args/kwargs — confirmed by testing both.
+  Fix added: `claim_initial_owner()` write method — a normal (non-constructor)
+  call, where sender_address has been 100% reliable throughout this whole
+  project. If `self.owner` is still the zero address, the first caller of
+  `claim_initial_owner()` becomes owner/admin; no-ops (raises) once a real
+  owner is set. Deploying via Studio UI (as the user did for the current
+  address) resolves sender correctly and doesn't need this bootstrap — it's
+  a safety net for RPC-based deploys only.
+- **Not yet end-to-end value-tested against the live contract**: syntax is
+  proven correct (throwaway test contract: payable fund + emit-transfer both
+  returned `execution_result: SUCCESS`), and reads-after-write can lag by a
+  few seconds (same pattern as the judging-sweep fix — poll before trusting
+  a read right after a write). But no custodial app wallet holds any real
+  GEN yet, so a full fund→judge→finalize→claim round trip with actual
+  balance movement hasn't been observed. Needs: send a small amount of GEN
+  from the funded Studio account into an app user's custodial wallet, then
+  run the flow for real.
 
 ## Gotchas
 - genlayer-js v0.10.0 is ESM-only, no `studionet` chain export → loaded via
   dynamic import(); StudioNet = `localnet` chain shape + hosted endpoint.
-- Admin promotion is via `ADMIN_EMAILS` env at registration time.
+- genlayer-js `readContract` results are `Map`s → normalized via `toPlain()`
+  in `backend/src/services/genlayer.ts`.
+- Admin promotion is via `ADMIN_EMAILS` env at registration time (app-level
+  admin ≠ contract-level admin; the latter needs `add_admin` on-chain, see above).
 - Contract method args must stay primitives/strings (dates passed as ISO
   strings because the chain has no clock).
+- A GenLayer tx can be consensus-ACCEPTED while its LEADER execution errored
+  — always check `receipt.consensus_data.leader_receipt.execution_result`,
+  not just tx status.
