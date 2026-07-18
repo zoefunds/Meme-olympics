@@ -2,9 +2,11 @@
  * Weekly competition lifecycle + judging worker.
  *
  * Schedule (UTC):
- *  - Monday 00:05  — rollover: close last week (judging), open new week
- *  - hourly        — judging sweep: evaluate on-chain pending submissions
- *  - Monday 12:05  — finalize previous week after judging, email winners
+ *  - Monday 00:05 — rollover: open a new official weekly arena
+ *  - every minute — deadline sweep: close any arena whose deadline just
+ *    passed, judge its submissions, and finalize once judging is complete —
+ *    all in the same tick, so the full pipeline runs within ~1 minute of
+ *    the deadline instead of waiting on a hard-coded hourly schedule.
  *
  * All chain calls are operator-signed and idempotent against contract state.
  */
@@ -23,20 +25,17 @@ function isoWeekId(date = new Date()): string {
   return `week-${d.getUTCFullYear()}-${String(week).padStart(2, "0")}`;
 }
 
-export async function runWeeklyRollover() {
-  const newId = isoWeekId();
+/**
+ * Close any 'open' competition whose deadline has passed, moving it into
+ * judging both in the DB and on-chain. Runs every minute so a deadline is
+ * acted on almost immediately rather than waiting on an hourly tick.
+ */
+export async function runDeadlineClose() {
   const now = new Date();
-  const endsAt = new Date(now);
-  endsAt.setUTCDate(endsAt.getUTCDate() + ((8 - endsAt.getUTCDay()) % 7 || 7));
-  endsAt.setUTCHours(0, 0, 0, 0);
-
-  // Move only EXPIRED open competitions into judging — user-hosted arenas
-  // stay open until their own deadline.
-  const open = await prisma.competition.findMany({
+  const expired = await prisma.competition.findMany({
     where: { status: "open", endsAt: { lte: now } },
   });
-  for (const comp of open) {
-    if (comp.id === newId) continue;
+  for (const comp of expired) {
     await prisma.competition.update({
       where: { id: comp.id },
       data: { status: "judging" },
@@ -45,12 +44,26 @@ export async function runWeeklyRollover() {
       try {
         await gl.closeSubmissionsOnChain(comp.id);
       } catch (err) {
-        logger.error({ err: (err as Error).message }, "close_submissions failed");
+        logger.error(
+          { comp: comp.id, err: (err as Error).message },
+          "close_submissions failed"
+        );
       }
     }
+    logger.info({ comp: comp.id }, "competition closed at deadline");
   }
+  return { closed: expired.map((c) => c.id) };
+}
 
-  // Create/open this week's competition.
+export async function runWeeklyRollover() {
+  const newId = isoWeekId();
+  const now = new Date();
+  const endsAt = new Date(now);
+  endsAt.setUTCDate(endsAt.getUTCDate() + ((8 - endsAt.getUTCDay()) % 7 || 7));
+  endsAt.setUTCHours(0, 0, 0, 0);
+
+  // Create/open this week's competition. Closing expired arenas (including
+  // last week's) is handled continuously by runDeadlineClose, not here.
   let comp = await prisma.competition.findUnique({ where: { id: newId } });
   if (!comp) {
     comp = await prisma.competition.create({
@@ -83,7 +96,7 @@ export async function runWeeklyRollover() {
     }
   }
   logger.info({ competition: newId }, "weekly rollover complete");
-  return { opened: newId, closed: open.map((c) => c.id) };
+  return { opened: newId };
 }
 
 /** Evaluate on-chain submissions that haven't been judged yet, then sync results. */
@@ -216,12 +229,35 @@ export async function runFinalization() {
   return { finalized };
 }
 
+let sweepRunning = false;
+
+/**
+ * The full per-competition pipeline in one tick: close arenas whose
+ * deadline just passed, judge whatever's pending, finalize whatever's
+ * fully judged. Guarded against overlap — judging a handful of submissions
+ * can take longer than the 1-minute tick, so a slow run skips the next
+ * tick rather than piling up concurrent sweeps.
+ */
+async function runDeadlineSweep() {
+  if (sweepRunning) return;
+  sweepRunning = true;
+  try {
+    await runDeadlineClose();
+    await runJudgingSweep();
+    await runFinalization();
+  } catch (err) {
+    logger.error({ err: (err as Error).message }, "deadline sweep failed");
+  } finally {
+    sweepRunning = false;
+  }
+}
+
 export function startSchedulers() {
-  // Weekly rollover — Mondays 00:05 UTC
+  // Weekly rollover — Mondays 00:05 UTC (opens the new official arena only)
   cron.schedule("5 0 * * 1", () => void runWeeklyRollover(), { timezone: "UTC" });
-  // Judging sweep — hourly at :15
-  cron.schedule("15 * * * *", () => void runJudgingSweep(), { timezone: "UTC" });
-  // Finalization attempt — hourly at :45
-  cron.schedule("45 * * * *", () => void runFinalization(), { timezone: "UTC" });
-  logger.info("schedulers started (rollover, judging, finalization)");
+  // Deadline sweep — every minute: close expired arenas, judge, finalize.
+  // This is what makes judging happen immediately after a deadline instead
+  // of on a fixed hourly schedule.
+  cron.schedule("* * * * *", () => void runDeadlineSweep(), { timezone: "UTC" });
+  logger.info("schedulers started (weekly rollover, per-minute deadline sweep)");
 }
