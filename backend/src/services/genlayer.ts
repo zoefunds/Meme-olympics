@@ -110,6 +110,30 @@ async function waitAccepted(client: GLClient, hash: string) {
   return receipt;
 }
 
+/**
+ * Waits past ACCEPTED through to FINALIZED (the appeal window has closed).
+ * Used for judging specifically: the caller wants submission N fully
+ * settled on the explorer before submission N+1's evaluate tx is even
+ * broadcast, not just consensus-accepted. Bounded — if finalization is slow
+ * (network congestion), logs a warning and proceeds rather than blocking
+ * the whole judging queue indefinitely.
+ */
+async function waitFinalized(client: GLClient, hash: string): Promise<void> {
+  try {
+    await client.waitForTransactionReceipt({
+      hash,
+      status: "FINALIZED",
+      interval: 5000,
+      retries: 60, // up to 5 minutes
+    });
+  } catch (err) {
+    logger.warn(
+      { hash, err: (err as Error).message },
+      "tx did not reach FINALIZED within the wait window; proceeding anyway"
+    );
+  }
+}
+
 /** genlayer-js decodes calldata dicts as Maps — normalize to plain JSON. */
 function toPlain(value: any): any {
   if (value instanceof Map) {
@@ -136,7 +160,8 @@ async function writeAs(
   client: GLClient,
   functionName: string,
   args: any[],
-  value: bigint = BigInt(0)
+  value: bigint = BigInt(0),
+  waitForFinal: boolean = false
 ): Promise<string> {
   const hash = await client.writeContract({
     address: contractAddress(),
@@ -146,6 +171,7 @@ async function writeAs(
   });
   logger.info({ functionName, hash, value: value.toString() }, "genlayer tx sent");
   await waitAccepted(client, hash as string);
+  if (waitForFinal) await waitFinalized(client, hash as string);
   return hash as string;
 }
 
@@ -255,7 +281,16 @@ export async function finalizeCompetitionOnChain(
 export async function evaluateSubmissionOnChain(
   submissionId: string
 ): Promise<string> {
-  return writeAs(await getOperatorClient(), "evaluate_submission", [submissionId]);
+  // waitForFinal=true: judging must be strictly sequential on the explorer —
+  // this submission reaches FINALIZED before the judging sweep's loop moves
+  // on to broadcast the next submission's evaluate tx.
+  return writeAs(
+    await getOperatorClient(),
+    "evaluate_submission",
+    [submissionId],
+    BigInt(0),
+    true
+  );
 }
 
 export async function resolveDisputeOnChain(
