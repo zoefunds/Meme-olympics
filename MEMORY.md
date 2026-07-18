@@ -68,14 +68,40 @@ votes. One serious project, one robust contract.
   balance backs it, readable via `self.balance` / `get_contract_info().contract_gen_balance_atto`).
   `claim_reward()` is self-serve: caller pulls their full `reward_balances_atto`
   to their own wallet via a genuine on-chain transfer.
-- **Confirmed working call pattern on THIS pinned runner** (validated via a
-  throwaway test contract before touching production — see below): outbound
-  transfer is `gl.get_contract_at(Address(to)).emit(value=u256(amount)).emit_transfer()`
-  — NOT `.emit_transfer(value)` as the newest genvm main-branch docs show
-  (that form raises `TypeError: emit_transfer() takes 1 positional argument
-  but 2 were given` on the pinned runner). The genvm GitHub repo is often
-  AHEAD of what `py-genlayer:1jb45aa8...` actually ships — don't trust its
-  docstrings for calling conventions without a live test.
+- **THE REAL FIX (confirmed by live testing with real funded accounts,
+  after extensive false starts — read this before touching payout code)**:
+  `gl.get_contract_at(addr).emit_transfer(...)` — in EVERY calling
+  convention tried (chained `.emit(value=X).emit_transfer()`, direct
+  `.emit_transfer(value=X, on=...)` keyword form matching genvm's own docs
+  AND a working reference project's exact code, `gl.chain.Account`,
+  `gl.Account`, `gl.send`, `gl.transfer`) — **only delivers value to a
+  deployed CONTRACT address. It fails against a plain wallet (EOA)**,
+  which is what every custodial wallet is, either with an explicit
+  `"Contract <addr> not found"` error or a silent no-op (zero triggered
+  transactions, no balance change, no error). Proven with a control test:
+  identical code succeeds and moves real value when the destination is a
+  contract, fails every time when the destination is a wallet.
+  **The mechanism that actually works**: an `@gl.evm.contract_interface`
+  stub, routed through GenLayer's EVM-compatibility layer instead of the
+  native `get_contract_at` lookup:
+  ```python
+  @gl.evm.contract_interface
+  class _Recipient:
+      class View: pass
+      class Write: pass
+
+  def _send_gen(self, to_address: str, amount: u256) -> None:
+      _Recipient(Address(to_address)).emit_transfer(value=amount)
+  ```
+  Confirmed live: wallet balance increased by exactly the transferred
+  amount. This is now the ONLY payout mechanism in the contract — every
+  transfer routes through `_send_gen`, no other code path calls
+  `emit_transfer` directly. Source: a working reference project
+  (`~/Event-Weaver`, shared by a contact) uses this exact pattern for its
+  escrow payouts — note Event Weaver's own test suite only asserts its
+  internal ledger (`get_balance_of`), never a real wallet balance, so its
+  "verified" claim didn't actually prove this either; only live-network
+  testing with real funded accounts does.
 - Backend signs `create_competition`/`fund_competition`/`claim_reward` with
   the REQUESTING USER's own decrypted custodial key (not the operator) — real
   money moves from/to the person who owns it. `services/genlayer.ts` has
@@ -93,15 +119,14 @@ votes. One serious project, one robust contract.
   owner is set. Deploying via Studio UI (as the user did for the current
   address) resolves sender correctly and doesn't need this bootstrap — it's
   a safety net for RPC-based deploys only.
-- **Not yet end-to-end value-tested against the live contract**: syntax is
-  proven correct (throwaway test contract: payable fund + emit-transfer both
-  returned `execution_result: SUCCESS`), and reads-after-write can lag by a
-  few seconds (same pattern as the judging-sweep fix — poll before trusting
-  a read right after a write). But no custodial app wallet holds any real
-  GEN yet, so a full fund→judge→finalize→claim round trip with actual
-  balance movement hasn't been observed. Needs: send a small amount of GEN
-  from the funded Studio account into an app user's custodial wallet, then
-  run the flow for real.
+- Reads-after-write can lag by several seconds on this network (same
+  pattern hit repeatedly: judging sweep, finalization winners, wallet
+  balance after claim) — always poll before trusting a read that
+  immediately follows a write. `readSettled()` / `waitForWalletIncrease()`
+  in `genlayer.ts` exist for exactly this.
+- claim_reward end-to-end (fund → judge → finalize → claim → real wallet
+  balance increase) is now proven working with the `_send_gen`/EVM-interface
+  fix — pending a fresh contract deploy + backend rewire to pick it up.
 
 ## Gotchas
 - genlayer-js v0.10.0 is ESM-only, no `studionet` chain export → loaded via
