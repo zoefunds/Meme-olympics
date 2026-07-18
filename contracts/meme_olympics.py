@@ -7,6 +7,25 @@ from dataclasses import dataclass
 
 from genlayer import *
 
+
+@gl.evm.contract_interface
+class _Recipient:
+    """EVM-interface stub used solely to route native GEN payouts through
+    GenLayer's EVM-compatibility layer. This is the ONLY mechanism that
+    successfully delivers value to a plain wallet (EOA) — confirmed by
+    live testing against real funded accounts. `gl.get_contract_at(addr)
+    .emit_transfer(...)` (the pattern suggested by genvm's own docs and
+    examples) instead fails with "Contract ... not found" against any
+    address without deployed contract code, which is what every user's
+    custodial wallet is. Route ALL payouts through _send_gen below —
+    never call emit_transfer directly elsewhere."""
+
+    class View:
+        pass
+
+    class Write:
+        pass
+
 # ----------------------------------------------------------------------------
 # Error classification prefixes.
 #
@@ -1262,25 +1281,32 @@ Return ONLY a JSON object exactly like:
             raise gl.vm.UserError(
                 f"{ERROR_EXPECTED} Contract balance insufficient for claim"
             )
-        # Checks-effects-interactions: zero the claimable balance BEFORE
-        # sending value out, so a re-entrant or repeated claim call sees 0.
+        # Checks-effects-interactions: zero the claimable balance, THEN
+        # persist, THEN transfer — a second claim call (re-entrant or
+        # repeated) finds the ledger already at 0 before ever reaching
+        # the transfer, so double-spend is structurally impossible.
         self.reward_balances_atto[sender] = u256(0)
-        # NOTE: `.emit(value=X).emit_transfer()` (chained) routes as a
-        # contract METHOD CALL named "emit_transfer" targeting the
-        # recipient — it fails with "Contract ... not found" against a
-        # plain wallet (EOA) that has no contract code deployed there,
-        # which is exactly what every user's custodial wallet is. The
-        # correct native-value-transfer primitive, which works against
-        # both EOAs and contracts, is calling `.emit_transfer(value=..., on=...)`
-        # directly as a keyword call — confirmed against a known-working
-        # reference contract (Event Weaver) and verified live below.
-        gl.get_contract_at(Address(sender)).emit_transfer(
-            value=u256(amount), on="finalized"
-        )
         self.total_rewards_claimed_atto = u256(
             int(self.total_rewards_claimed_atto) + amount
         )
         self._log("reward_claimed", {"addr": sender, "amount_atto": amount})
+        self._send_gen(sender, u256(amount))
+
+    def _send_gen(self, to_address: str, amount: u256) -> None:
+        """Single choke point for every native GEN payout this contract
+        makes — route ALL transfers through here, never call emit_transfer
+        directly elsewhere. Uses the EVM-interface stub (_Recipient), the
+        only mechanism confirmed (via live testing against real funded
+        accounts) to actually deliver value to a plain wallet (EOA):
+        `gl.get_contract_at(addr).emit_transfer(...)` — the pattern shown
+        in genvm's own docs/examples — fails with "Contract ... not found"
+        against any address without deployed contract code, which is what
+        every custodial wallet is."""
+        if not to_address:
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} Missing recipient address")
+        if int(amount) <= 0:
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} Transfer amount must be positive")
+        _Recipient(Address(to_address)).emit_transfer(value=amount)
 
     # ==================================================================
     # Disputes — evidence-based, contract-side web verification
