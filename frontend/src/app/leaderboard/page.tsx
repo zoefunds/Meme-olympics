@@ -1,7 +1,7 @@
 "use client";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
 import { GlassCard, MonoLabel, StatusChip } from "@/components/ui";
 
@@ -20,8 +20,10 @@ type Entry = {
   plagiarismVerdict: string;
 };
 
-export default function Leaderboard() {
+function LeaderboardInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const arenaParam = searchParams.get("arena");
   const [comps, setComps] = useState<Comp[]>([]);
   const [selected, setSelected] = useState<string>("");
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -29,8 +31,13 @@ export default function Leaderboard() {
   useEffect(() => {
     api<{ competitions: Comp[] }>("/api/competitions").then((r) => {
       setComps(r.competitions);
-      if (r.competitions[0]) setSelected(r.competitions[0].id);
+      if (arenaParam && r.competitions.some((c) => c.id === arenaParam)) {
+        setSelected(arenaParam);
+      } else if (r.competitions[0]) {
+        setSelected(r.competitions[0].id);
+      }
     }).catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -188,5 +195,13 @@ export default function Leaderboard() {
         </GlassCard>
       )}
     </main>
+  );
+}
+
+export default function Leaderboard() {
+  return (
+    <Suspense>
+      <LeaderboardInner />
+    </Suspense>
   );
 }

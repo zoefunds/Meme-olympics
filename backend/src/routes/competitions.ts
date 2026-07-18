@@ -143,7 +143,7 @@ competitionsRouter.get("/", async (_req, res) => {
   if (cached) return res.json(JSON.parse(cached));
   const comps = await prisma.competition.findMany({
     orderBy: { startsAt: "desc" },
-    take: 20,
+    take: 50,
     include: { _count: { select: { submissions: true } } },
   });
   const payload = {
@@ -155,6 +155,7 @@ competitionsRouter.get("/", async (_req, res) => {
       startsAt: c.startsAt,
       endsAt: c.endsAt,
       submissionCount: c._count.submissions,
+      prizeAtto: c.prizeAtto,
       winners: JSON.parse(c.winnersJson || "[]"),
     })),
   };

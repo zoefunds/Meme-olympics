@@ -7,6 +7,7 @@ import { getUser, clearSession } from "@/lib/api";
 
 const links = [
   { href: "/arena", label: "Arena" },
+  { href: "/arenas", label: "All Arenas" },
   { href: "/leaderboard", label: "Leaderboard" },
   { href: "/rewards", label: "Rewards" },
   { href: "/docs", label: "Docs" },
