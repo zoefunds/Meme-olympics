@@ -419,10 +419,22 @@ class MemeOlympics(gl.Contract):
         raise gl.vm.UserError(f"{ERROR_TRANSIENT} no web render capability")
 
     @staticmethod
-    def _exec_prompt_json(prompt: str) -> dict:
-        """Run an LLM prompt and coerce the response into a dict."""
+    def _exec_prompt_json(prompt: str, images: list = None) -> dict:
+        """Run an LLM prompt and coerce the response into a dict. `images`,
+        if given, is a list of raw image bytes — genuine visual input, not
+        just a URL string in the prompt text. NOTE: the runtime's own type
+        stubs are inconsistent between overloads (one shows `image=`
+        singular for JSON mode) but the actual implementation only reads
+        the `images` (plural, list) kwarg regardless of response_format —
+        confirmed by testing; passing `image=` singular is silently a
+        no-op."""
         try:
-            result = gl.nondet.exec_prompt(prompt, response_format="json")
+            if images:
+                result = gl.nondet.exec_prompt(
+                    prompt, response_format="json", images=images
+                )
+            else:
+                result = gl.nondet.exec_prompt(prompt, response_format="json")
         except Exception as exc:
             raise gl.vm.UserError(f"{ERROR_LLM} exec_prompt failed: {exc}")
         if isinstance(result, dict):
@@ -852,11 +864,21 @@ class MemeOlympics(gl.Contract):
     # AI EVALUATION — the consensus core.
     # ==================================================================
     def _build_evaluation_prompt(
-        self, sub: Submission, theme: str, page_note: str
+        self, sub: Submission, theme: str, page_note: str, has_image: bool = False
     ) -> str:
         weights = self._get_weights()
         criteria_lines = "\n".join(
             f'- "{c}" (weight {weights[c]} bp): score 0-10' for c in CRITERIA
+        )
+        vision_note = (
+            "The actual meme image is attached below — you can genuinely SEE "
+            "it. Base your judgment on what is literally depicted (subject, "
+            "template/format, composition, text overlay, image quality), not "
+            "just the metadata."
+            if has_image
+            else "The image could not be attached this time — judge from the "
+            "metadata below only, and treat that as a limitation, not a "
+            "confident visual assessment."
         )
         return f"""You are an expert judge for "Meme Olympics", a weekly crypto meme
 competition. Judge the following meme submission on reasoning-based criteria,
@@ -864,13 +886,14 @@ not popularity. Be consistent, fair and moderately generous: reserve scores
 below 3 for clearly poor or off-topic entries, and scores above 8 for
 genuinely exceptional ones.
 
+{vision_note}
+
 COMPETITION THEME: {theme or "open theme — current crypto culture"}
 
 SUBMISSION METADATA:
 - Title: {sub.title}
 - Caption: {sub.caption}
 - Tags: {sub.tags_json}
-- Image URL: {sub.image_url}
 - Context URL provided: {"yes" if sub.context_url else "no"}
 - Image accessibility check: {page_note}
 
@@ -878,17 +901,23 @@ TASKS:
 1. Score each criterion as an integer 0-10:
 {criteria_lines}
 
-2. Plagiarism / recycling assessment. Based on the title, caption, image URL,
-its filename/host, and your knowledge of widely circulated memes on Reddit,
-X/Twitter, Telegram, Discord, 4chan and meme archives, classify the meme:
-- "original": appears to be a novel creation or a substantially transformative remix
-- "suspicious": resembles a known meme format with limited transformation (this is
-  NORMAL for memes — using a known template with fresh text/context is fine and
+2. Plagiarism / recycling assessment. Look at the actual image content: is
+this a well-known meme template (e.g. Drake, Distracted Boyfriend, Woman
+Yelling at Cat) reused with fresh text/context — that's NORMAL and fine — or
+does it look like a direct screenshot/repost of existing content with
+someone else's caption/watermark still on it, or a near-identical duplicate
+of something widely circulated? Combine what you SEE with the title/caption
+and your knowledge of widely circulated memes on Reddit, X/Twitter,
+Telegram, Discord, 4chan and meme archives, then classify:
+- "original": a novel creation or a substantially transformative remix
+- "suspicious": a known template/format with limited transformation (NORMAL
+  for memes — using a known template with fresh text/context is fine and
   should usually remain scoreable)
-- "copied": very likely a direct repost/screenshot of existing content with no
-  meaningful transformation
+- "copied": very likely a direct repost/screenshot of existing content with
+  no meaningful transformation (e.g. visible original watermark, screenshot
+  chrome, or pixel-identical to a widely known image)
 Give a confidence 0-100 for your classification. Only choose "copied" when the
-evidence is strong; when in doubt between suspicious and copied, choose
+visual evidence is strong; when in doubt between suspicious and copied, choose
 "suspicious".
 
 3. Write a 1-3 sentence judging summary.
@@ -903,13 +932,20 @@ Return ONLY a JSON object exactly like:
 
     def _run_evaluation(self, sub: Submission, theme: str) -> dict:
         """Leader/validator shared task: probe the image URL, then run the
-        LLM judging prompt and normalize the result to stable fields."""
-        # 1) Contract-side web access: verify the meme image actually exists.
+        LLM judging prompt — WITH the actual image bytes as genuine visual
+        input, not just a URL string — and normalize the result to stable
+        fields."""
+        # 1) Contract-side web access: verify the meme image actually exists,
+        # and capture its bytes for real visual analysis (confirmed working
+        # via live testing: the LLM correctly identifies actual pixel
+        # content — colors, subjects, scenes — not just filename/URL text).
         image_accessible = False
+        image_bytes = None
         page_note = "unknown"
         try:
             response = self._web_get(sub.image_url)
             image_accessible = True
+            image_bytes = getattr(response, "body", None)
             content_type = ""
             headers = getattr(response, "headers", None)
             if isinstance(headers, dict):
@@ -924,9 +960,12 @@ Return ONLY a JSON object exactly like:
                 raise  # let transient failures classify as transient
             page_note = "NOT reachable (HTTP client error)"
 
-        # 2) LLM judging.
+        # 2) LLM judging — visual when we have image bytes, text-only
+        # fallback otherwise (e.g. fetch failed but wasn't disqualifying).
+        images = [image_bytes] if isinstance(image_bytes, (bytes, bytearray)) else None
         analysis = self._exec_prompt_json(
-            self._build_evaluation_prompt(sub, theme, page_note)
+            self._build_evaluation_prompt(sub, theme, page_note, bool(images)),
+            images=images,
         )
 
         # 3) Defensive normalization to stable decision fields.
