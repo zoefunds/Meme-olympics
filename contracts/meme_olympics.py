@@ -1265,7 +1265,18 @@ Return ONLY a JSON object exactly like:
         # Checks-effects-interactions: zero the claimable balance BEFORE
         # sending value out, so a re-entrant or repeated claim call sees 0.
         self.reward_balances_atto[sender] = u256(0)
-        gl.get_contract_at(Address(sender)).emit(value=u256(amount)).emit_transfer()
+        # NOTE: `.emit(value=X).emit_transfer()` (chained) routes as a
+        # contract METHOD CALL named "emit_transfer" targeting the
+        # recipient — it fails with "Contract ... not found" against a
+        # plain wallet (EOA) that has no contract code deployed there,
+        # which is exactly what every user's custodial wallet is. The
+        # correct native-value-transfer primitive, which works against
+        # both EOAs and contracts, is calling `.emit_transfer(value=..., on=...)`
+        # directly as a keyword call — confirmed against a known-working
+        # reference contract (Event Weaver) and verified live below.
+        gl.get_contract_at(Address(sender)).emit_transfer(
+            value=u256(amount), on="finalized"
+        )
         self.total_rewards_claimed_atto = u256(
             int(self.total_rewards_claimed_atto) + amount
         )
