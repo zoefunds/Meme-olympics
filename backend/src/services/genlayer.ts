@@ -363,6 +363,34 @@ export async function getOnchainRewardBalance(address: string) {
   return readContract("get_reward_balance", [address]);
 }
 
+/** Real, spendable GEN balance of any wallet — chain-level native balance,
+ * distinct from get_reward_balance (which is only the contract's
+ * not-yet-claimed escrow for that address). This is what a dashboard
+ * should show as "your GEN". */
+export async function getWalletBalance(address: string): Promise<string> {
+  const client = await getOperatorClient();
+  const balance = await client.getBalance({ address });
+  return (balance as bigint).toString();
+}
+
+/** Poll a wallet's real balance until it rises above `aboveAtto`, or give
+ * up and return the last-seen value. Native-balance analogue of
+ * readSettled — a claim's triggered transfer settles slightly after the
+ * claim_reward call itself finalizes. */
+export async function waitForWalletIncrease(
+  address: string,
+  aboveAtto: string,
+  retries = 15,
+  delayMs = 4000
+): Promise<string> {
+  let value = await getWalletBalance(address);
+  for (let i = 0; i < retries && BigInt(value) <= BigInt(aboveAtto); i++) {
+    await new Promise((r) => setTimeout(r, delayMs));
+    value = await getWalletBalance(address);
+  }
+  return value;
+}
+
 export async function getContractInfo() {
   return readContract("get_contract_info", []);
 }
