@@ -42,9 +42,15 @@ function LeaderboardInner() {
 
   useEffect(() => {
     if (!selected) return;
-    api<{ leaderboard: Entry[] }>(`/api/competitions/${selected}/leaderboard`)
-      .then((r) => setEntries(r.leaderboard))
-      .catch(() => setEntries([]));
+    const load = () =>
+      api<{ leaderboard: Entry[] }>(`/api/competitions/${selected}/leaderboard`)
+        .then((r) => setEntries(r.leaderboard))
+        .catch(() => setEntries([]));
+    load();
+    // Scores land one meme at a time as judging progresses — poll so
+    // rankings update live instead of needing a manual reload.
+    const id = setInterval(load, 15000);
+    return () => clearInterval(id);
   }, [selected]);
 
   const podium = entries.slice(0, 3);

@@ -93,9 +93,25 @@ export default function MemeDetail() {
 
   useEffect(() => {
     if (!params?.id) return;
-    api<{ submission: Sub }>(`/api/submissions/${params.id}`)
-      .then((r) => setSub(r.submission))
-      .catch((e) => setError((e as Error).message));
+    let latestStatus = "pending";
+    const load = () =>
+      api<{ submission: Sub }>(`/api/submissions/${params.id}`)
+        .then((r) => {
+          latestStatus = r.submission.status;
+          setSub(r.submission);
+        })
+        .catch((e) => setError((e as Error).message));
+    load();
+    // Poll while judging is still in flight so the score/verdict appear
+    // live; stop once the outcome is settled — no point polling forever.
+    const id = setInterval(() => {
+      if (!["pending", "onchain"].includes(latestStatus)) {
+        clearInterval(id);
+        return;
+      }
+      load();
+    }, 10000);
+    return () => clearInterval(id);
   }, [params?.id]);
 
   if (error) {

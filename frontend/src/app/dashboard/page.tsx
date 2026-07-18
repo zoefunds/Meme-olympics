@@ -33,9 +33,15 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!getUser()) return router.push("/login");
-    api<{ submissions: Sub[] }>("/api/submissions/mine")
-      .then((r) => setSubs(r.submissions))
-      .catch(() => undefined);
+    const load = () =>
+      api<{ submissions: Sub[] }>("/api/submissions/mine")
+        .then((r) => setSubs(r.submissions))
+        .catch(() => undefined);
+    load();
+    // Judging happens async on-chain (30-60s per meme) — poll so status
+    // moves from pending -> onchain -> evaluated without a manual reload.
+    const id = setInterval(load, 15000);
+    return () => clearInterval(id);
   }, [router]);
 
   const wins = subs.filter((s) => s.status === "winner").length;

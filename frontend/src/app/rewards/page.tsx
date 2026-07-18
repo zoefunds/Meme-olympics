@@ -31,6 +31,11 @@ export default function RewardsPage() {
   useEffect(() => {
     if (!getUser()) return router.push("/login");
     load();
+    // Wins/claimable balance change as arenas finalize in the background —
+    // poll so this updates without a manual reload.
+    const id = setInterval(load, 20000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
   async function claim() {

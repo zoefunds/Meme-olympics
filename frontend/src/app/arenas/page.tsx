@@ -58,10 +58,16 @@ export default function Arenas() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api<{ competitions: Comp[] }>("/api/competitions")
-      .then((r) => setComps(r.competitions))
-      .catch(() => setComps([]))
-      .finally(() => setLoading(false));
+    const load = () =>
+      api<{ competitions: Comp[] }>("/api/competitions")
+        .then((r) => setComps(r.competitions))
+        .catch(() => setComps([]))
+        .finally(() => setLoading(false));
+    load();
+    // Arenas move between open/judging/finalized on their own schedule —
+    // poll so status/counts stay live without a manual reload.
+    const id = setInterval(load, 20000);
+    return () => clearInterval(id);
   }, []);
 
   const filtered = useMemo(() => {

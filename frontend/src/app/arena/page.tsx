@@ -58,17 +58,23 @@ export default function Arena() {
   const countdown = useCountdown(comp?.endsAt);
 
   useEffect(() => {
-    api<Comp>("/api/competitions/active")
-      .then(async (c) => {
-        setComp(c);
-        if (c.active && c.id) {
-          const lb = await api<{ leaderboard: Entry[] }>(
-            `/api/competitions/${c.id}/leaderboard`
-          );
-          setEntries(lb.leaderboard.slice(0, 9));
-        }
-      })
-      .catch(() => setComp({ active: false }));
+    const load = () =>
+      api<Comp>("/api/competitions/active")
+        .then(async (c) => {
+          setComp(c);
+          if (c.active && c.id) {
+            const lb = await api<{ leaderboard: Entry[] }>(
+              `/api/competitions/${c.id}/leaderboard`
+            );
+            setEntries(lb.leaderboard.slice(0, 9));
+          }
+        })
+        .catch(() => setComp({ active: false }));
+    load();
+    // Submission count and scores change as the arena fills up and judging
+    // runs — poll so this stays live without a manual reload.
+    const id = setInterval(load, 20000);
+    return () => clearInterval(id);
   }, []);
 
   return (
