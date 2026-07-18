@@ -1,6 +1,6 @@
 "use client";
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { api, getUser, API_URL } from "@/lib/api";
 import { GlassCard, MonoLabel, PrestigeButton, SegmentedBar } from "@/components/ui";
 
@@ -9,8 +9,10 @@ import { GlassCard, MonoLabel, PrestigeButton, SegmentedBar } from "@/components
 
 const STEPS = ["Asset", "Context", "Pre-Flight"];
 
-export default function Submit() {
+function SubmitInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const arenaParam = searchParams.get("arena");
   const [step, setStep] = useState(1);
   const [arenas, setArenas] = useState<Array<{ id: string; title: string; status: string }>>([]);
   const [compId, setCompId] = useState("");
@@ -37,9 +39,14 @@ export default function Submit() {
       .then((r) => {
         const open = r.competitions.filter((c) => c.status === "open");
         setArenas(open);
-        if (open[0]) setCompId(open[0].id);
+        if (arenaParam && open.some((c) => c.id === arenaParam)) {
+          setCompId(arenaParam);
+        } else if (open[0]) {
+          setCompId(open[0].id);
+        }
       })
       .catch(() => setArenas([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
   async function uploadFile(file: File) {
@@ -350,5 +357,13 @@ export default function Submit() {
         <MonoLabel>Immutable Submission • GenLayer Verifiable</MonoLabel>
       </div>
     </main>
+  );
+}
+
+export default function Submit() {
+  return (
+    <Suspense>
+      <SubmitInner />
+    </Suspense>
   );
 }

@@ -211,7 +211,7 @@ competitionsRouter.get("/:id/leaderboard", async (req, res) => {
       status: { in: ["evaluated", "winner"] },
     },
     orderBy: [{ totalScore: "desc" }, { id: "asc" }],
-    take: 100,
+    take: 500, // matches the contract's MAX_SUBMISSIONS_PER_COMPETITION
     include: { user: { select: { username: true, walletAddress: true } } },
   });
   const payload = {

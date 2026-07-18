@@ -108,7 +108,7 @@ export default function Dashboard() {
               <GlassCard className="group cursor-pointer hover:border-cyan/40 transition-colors">
                 <div className="relative h-48 overflow-hidden">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={s.imageUrl} alt={s.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
+                  <img loading="lazy" src={s.imageUrl} alt={s.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
                   <div className="absolute top-3 right-3">
                     <StatusChip
                       label={s.status.toUpperCase()}

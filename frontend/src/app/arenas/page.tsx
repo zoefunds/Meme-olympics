@@ -134,7 +134,7 @@ export default function Arenas() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           {filtered.map((c) => (
-            <Link key={c.id} href={`/leaderboard?arena=${c.id}`} className="block">
+            <Link key={c.id} href={`/arenas/${c.id}`} className="block">
               <GlassCard className="p-6 h-full hover:border-cyan-soft/40 transition-colors cursor-pointer">
                 <div className="flex justify-between items-start mb-4">
                   <StatusChip

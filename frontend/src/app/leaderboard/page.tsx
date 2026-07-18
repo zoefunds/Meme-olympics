@@ -106,6 +106,7 @@ function LeaderboardInner() {
                   <img
                     src={e.imageUrl}
                     alt={e.title}
+                    loading="lazy"
                     className={`w-full h-full object-cover group-hover:scale-110 transition-transform duration-700 ${e.rank > 1 ? "opacity-80" : ""}`}
                   />
                 </div>
@@ -173,7 +174,7 @@ function LeaderboardInner() {
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded bg-surface-high overflow-hidden">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={e.imageUrl} alt="" className="w-full h-full object-cover" />
+                          <img loading="lazy" src={e.imageUrl} alt="" className="w-full h-full object-cover" />
                         </div>
                         <span className="font-medium">{e.title}</span>
                       </div>
