@@ -594,10 +594,13 @@ class MemeOlympics(gl.Contract):
         starts_at: str,
         ends_at: str,
     ) -> None:
-        """Create a competition. OPEN TO ALL — anyone can host an arena.
-        IDs are caller-supplied (e.g. 'week-2026-28') so the off-chain
-        scheduler and the chain agree on naming without extra reads.
-        Anti-spam: non-admins are capped at 5 creations per account.
+        """Create a competition. OPEN TO ALL, unconditionally — anyone can
+        host an arena, with no lifetime cap and no admin approval ever
+        required. IDs are caller-supplied (e.g. 'week-2026-28') so the
+        off-chain scheduler and the chain agree on naming without extra
+        reads. Spam is bounded off-chain instead (a time-windowed rate limit
+        that resets automatically, unlike a hard on-chain cap that would
+        need an admin bypass) — see backend rate limiting on this route.
 
         PAYABLE: any GEN sent with this call becomes the competition's real,
         escrowed prize pool (0 is valid — a prestige-only arena with no
@@ -605,16 +608,12 @@ class MemeOlympics(gl.Contract):
         self._require_not_paused()
         funded = u256(int(gl.message.value))
         sender = self._sender()
-        if not (sender in self.admins and self.admins[sender]):
-            creator_key = f"created_by:{sender}"
-            created_count = int(self.user_comp_submission_count[creator_key]) if (
-                creator_key in self.user_comp_submission_count
-            ) else 0
-            if created_count >= 5:
-                raise gl.vm.UserError(
-                    f"{ERROR_EXPECTED} Competition creation limit reached (5 per account)"
-                )
-            self.user_comp_submission_count[creator_key] = u256(created_count + 1)
+        # Track creation count for stats only — no cap, no admin bypass needed.
+        creator_key = f"created_by:{sender}"
+        created_count = int(self.user_comp_submission_count[creator_key]) if (
+            creator_key in self.user_comp_submission_count
+        ) else 0
+        self.user_comp_submission_count[creator_key] = u256(created_count + 1)
 
         if not re.match(r"^[a-z0-9][a-z0-9\-]{2,63}$", competition_id):
             raise gl.vm.UserError(

@@ -99,12 +99,19 @@ export async function runWeeklyRollover() {
   return { opened: newId };
 }
 
-/** Evaluate on-chain submissions that haven't been judged yet, then sync results. */
+/** Evaluate on-chain submissions that haven't been judged yet, then sync results.
+ * Only judges submissions whose competition has actually CLOSED (status
+ * 'judging') — a competition still 'open' (deadline not reached) must never
+ * have its entries evaluated early, even if they're already registered
+ * on-chain. Closing happens in runDeadlineClose once the deadline passes. */
 export async function runJudgingSweep() {
   if (!gl.isChainConfigured()) return { evaluated: 0, note: "chain not configured" };
 
   const pending = await prisma.submission.findMany({
-    where: { status: { in: ["pending", "onchain"] } },
+    where: {
+      status: { in: ["pending", "onchain"] },
+      competition: { status: "judging" },
+    },
     orderBy: { createdAt: "desc" }, // newest first — stale rows can't starve the batch
     take: 10, // bounded batch: judging is LLM-heavy on-chain
     include: { user: true },
