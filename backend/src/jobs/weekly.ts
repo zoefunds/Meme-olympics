@@ -198,14 +198,30 @@ export async function runFinalization() {
 
     try {
       await gl.finalizeCompetitionOnChain(comp.id, new Date().toISOString());
-      const onchain = (await gl.getOnchainCompetition(comp.id)) as {
+      // Same accepted-but-not-yet-readable lag we've hit elsewhere: a read
+      // immediately after the finalize write can still return pre-finalize
+      // (empty winners) state. Poll until the read itself reflects the
+      // write before caching it — never trust the first read after a write.
+      const onchain = await gl.readSettled<{
+        status: string;
         winners: Array<{
           submission_id: string;
           rank: number;
           reward_atto: string;
         }>;
-      };
-      const winners = onchain.winners || [];
+      }>(
+        "get_competition",
+        [comp.id],
+        (v) => v.status === "finalized" && Array.isArray(v.winners)
+      );
+      const winners = onchain.status === "finalized" ? onchain.winners || [] : [];
+      if (onchain.status !== "finalized") {
+        logger.warn(
+          { comp: comp.id },
+          "finalize read did not settle in time; will retry next sweep"
+        );
+        continue;
+      }
       await prisma.competition.update({
         where: { id: comp.id },
         data: {
