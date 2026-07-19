@@ -135,9 +135,9 @@ sequenceDiagram
   by a genuine on-chain value transfer via an EVM-interface transfer helper
   (the native `get_contract_at`/`emit_transfer` path only works
   contract-to-contract, not against plain wallets — confirmed the hard way).
-- **GEN balance dashboard** — the Rewards page shows both a user's real,
-  spendable wallet GEN balance and their claimable escrow balance side by
-  side, with a one-click claim.
+- **GEN balance dashboard** — both the Rewards page (with a one-click claim)
+  and the Settings/profile page show a user's real, spendable wallet GEN
+  balance alongside their claimable escrow balance, polling every 10s.
 - **Live proof on the landing page** — a pulsing link to a real, currently
   judged meme's consensus report, so anyone can verify the judging is real
   before signing up.
@@ -145,8 +145,8 @@ sequenceDiagram
 - **Admin panel** — stats, manual rollover/judging triggers, dispute
   resolution, submission maintenance.
 - **Live status without a manual reload** — submission status, scores and
-  reward balances auto-poll on Dashboard, Leaderboard, Rewards, Arena and
-  meme-detail pages.
+  reward balances auto-poll on Dashboard, Leaderboard, Rewards, Settings,
+  Arena and meme-detail pages.
 
 ## Intelligent contract design notes
 
@@ -214,6 +214,23 @@ sequenceDiagram
   the API and frontend every 15 minutes with an auto-filed GitHub issue on
   failure. Rows that never reached the chain are auto-failed after 30 minutes
   instead of retrying forever.
+
+## Frontend performance
+
+The app shell (Vercel) and all data (Fly API) are on separate origins, so
+the browser doesn't open a connection to the API until the first fetch
+fires — that's the "page loads instantly, details lag a beat" pattern.
+Addressed with:
+
+- A `preconnect`/`dns-prefetch` hint to the API origin in the root layout,
+  so that connection opens in parallel with page render instead of only on
+  the first data request.
+- `GET /api/competitions/:id` (the Arena Detail page's heaviest-hit read —
+  page load + every poll tick) now carries the same 15–120s Redis cache
+  its sibling endpoints (list/active/leaderboard) already had.
+- Real loading states instead of a misleading empty state (e.g. Dashboard
+  no longer renders "No entries yet" while the first fetch is still in
+  flight).
 
 ## Automation (UTC)
 
