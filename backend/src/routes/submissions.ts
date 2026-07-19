@@ -40,10 +40,10 @@ submissionsRouter.post(
     const mine = await prisma.submission.count({
       where: { competitionId: comp.id, userId: req.userId! },
     });
-    if (mine >= 3) {
+    if (mine >= 1) {
       return res
         .status(400)
-        .json({ error: "You already used all 3 submissions this week" });
+        .json({ error: "You already submitted to this arena" });
     }
 
     const duplicate = await prisma.submission.findFirst({

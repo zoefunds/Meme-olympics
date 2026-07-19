@@ -252,35 +252,55 @@ export async function runFinalization() {
   return { finalized };
 }
 
-let sweepRunning = false;
+let closeRunning = false;
+let judgeRunning = false;
 
 /**
- * The full per-competition pipeline in one tick: close arenas whose
- * deadline just passed, judge whatever's pending, finalize whatever's
- * fully judged. Guarded against overlap — judging a handful of submissions
- * can take longer than the 1-minute tick, so a slow run skips the next
- * tick rather than piling up concurrent sweeps.
+ * Deadline close on its own guard, separate from judging/finalization.
+ * Closing is just a status flip + one fast on-chain call — it must never
+ * be blocked by another competition's judging run, which can legitimately
+ * take hours under strict sequential evaluation. Without this separation,
+ * an arena whose deadline has passed could keep accepting submissions for
+ * as long as an unrelated arena's judging sweep was still in flight.
  */
-async function runDeadlineSweep() {
-  if (sweepRunning) return;
-  sweepRunning = true;
+async function runCloseTick() {
+  if (closeRunning) return;
+  closeRunning = true;
   try {
     await runDeadlineClose();
+  } catch (err) {
+    logger.error({ err: (err as Error).message }, "deadline close tick failed");
+  } finally {
+    closeRunning = false;
+  }
+}
+
+/**
+ * Judging + finalization on their own guard — kept single-flight so only
+ * one competition's submissions are ever being judged at a time (strict
+ * sequential judging), independent of how often closes are ticking.
+ */
+async function runJudgeTick() {
+  if (judgeRunning) return;
+  judgeRunning = true;
+  try {
     await runJudgingSweep();
     await runFinalization();
   } catch (err) {
-    logger.error({ err: (err as Error).message }, "deadline sweep failed");
+    logger.error({ err: (err as Error).message }, "judging tick failed");
   } finally {
-    sweepRunning = false;
+    judgeRunning = false;
   }
 }
 
 export function startSchedulers() {
   // Weekly rollover — Mondays 00:05 UTC (opens the new official arena only)
   cron.schedule("5 0 * * 1", () => void runWeeklyRollover(), { timezone: "UTC" });
-  // Deadline sweep — every minute: close expired arenas, judge, finalize.
-  // This is what makes judging happen immediately after a deadline instead
-  // of on a fixed hourly schedule.
-  cron.schedule("* * * * *", () => void runDeadlineSweep(), { timezone: "UTC" });
-  logger.info("schedulers started (weekly rollover, per-minute deadline sweep)");
+  // Close sweep — every minute, always runs: flips any expired 'open'
+  // competition to 'judging' immediately, regardless of judging load.
+  cron.schedule("* * * * *", () => void runCloseTick(), { timezone: "UTC" });
+  // Judging sweep — every minute, single-flight: judges/finalizes whatever
+  // is already closed, one competition's submissions at a time.
+  cron.schedule("* * * * *", () => void runJudgeTick(), { timezone: "UTC" });
+  logger.info("schedulers started (weekly rollover, per-minute close + judge sweeps)");
 }
