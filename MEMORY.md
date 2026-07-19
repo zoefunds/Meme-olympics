@@ -38,28 +38,65 @@ votes. One serious project, one robust contract.
 - Disputes require a public evidence URL fetched **on-chain**; unfetchable
   evidence ⇒ auto-reject (never judge from user text alone).
 
-## Lifecycle automation (backend cron, UTC)
-- Mon 00:05 rollover (close last week → judging, open `week-YYYY-WW`)
-- Hourly :15 judging sweep (evaluate up to 10 on-chain pending)
-- Hourly :45 finalization attempt + winner emails
+## Lifecycle automation (backend, UTC)
+- Mon 00:05 rollover (opens the new official `week-YYYY-WW` arena on-chain)
+- **Exact-time close**: each arena gets its own `setTimeout` armed at
+  creation (and re-armed for every open arena on backend restart via
+  `armPendingCloseTimers()`) that fires `close_submissions` the instant
+  `endsAt` hits — closes land within ~1-2s of deadline, verified live.
+- Every-minute fallback sweep, split into two INDEPENDENT single-flight
+  guards (`closeRunning` / `judgeRunning`) so one never blocks the other:
+  - close tick — catches any arena whose exact timer was lost to a restart
+  - judge tick — judges up to 10 pending submissions (one arena's worth at
+    a time, strictly sequential — a submission is fully finalized on-chain
+    before the next is even sent) + finalizes fully-judged arenas
+  Before this split, a long judging run on one arena could block the CLOSE
+  step for a different, already-expired arena — letting it keep accepting
+  submissions past its deadline. Confirmed fixed live with two arenas
+  closing ~30s apart.
 
 ## Deployment status
 - [x] Repo: https://github.com/zoefunds/Meme-olympics (no Claude attribution)
-- [x] Contract deployed to StudioNet (CURRENT): `0x9F64636ba66ae1e893AA436A6B94dbA4706052Ee`
-      (owner/deployer: 0x7401c129EDfc26E68FE19309fE461eb3Db1058Eb, deployed via
-      Studio UI so sender resolved correctly; verified via get_contract_info).
-      Now supports REAL GEN value transfer (see below), creator-can-finalize,
-      and permissionless competition creation/funding.
-      Prior addresses (superseded, kept for history): 0x36E5...3323, 0x1cFe...5903,
-      0xC31D...9224 — each redeployed to clear test-data error states or add features.
+- [x] Contract deployed to StudioNet (CURRENT): `0x4EA07970855FeA17567693103610A25cd25aD159`
+      (owner/deployer: the user's own wallet, deployed via Studio UI — the
+      user deploys the contract themselves every time, never me).
+      Supports REAL GEN value transfer, creator-can-finalize, permissionless
+      competition creation/funding, vision-based judging, and a 1-submission-
+      per-user-per-arena cap (backend + `set_competition_defaults(3, 1)`).
+      Prior addresses (superseded, kept for history): 0xC31D...9224,
+      0x9F64...52Ee, 0xADC1...a877, 0xE96f...A571A, 0x3E57...7244 — each
+      redeployed by the user to clear test-data or add a feature.
 - [x] Fly deploy live at meme-olympics-api.fly.dev, GENLAYER_CONTRACT_ADDRESS
       updated to the current address above.
 - [x] Vercel deploy live at meme-olympics.vercel.app.
-- [ ] **Outstanding on every fresh contract deploy**: contract owner must call
-      `add_admin(<backend operator address>)` in Studio before automated
-      judging-sweep/finalization crons can act (backend operator key persists
-      across deploys — the SAME address needs re-granting admin each time the
-      contract address changes). Current backend operator: `0x4A6666C015BE347799E0B25cfE27bfd3847027BB`.
+- [x] Backend operator (`0x4A6666C015BE347799E0B25cfE27bfd3847027BB`) has
+      been granted `add_admin` on the current contract — automated
+      close/judge/finalize is fully live.
+- **Standing rule**: the user deploys the contract themselves via Studio
+  every time ("I will be the one to deploy the contract") — I prepare/fix
+  the contract file and hand off; I never deploy it. After each new
+  address, the user must re-run `add_admin(<operator address>)` since
+  contract-level admin doesn't carry over across redeploys.
+
+## Vision-based judging (added — read before touching the judging prompt)
+- The contract fetches the submission's actual image bytes (already doing
+  the fetch for reachability) and passes them to
+  `gl.nondet.exec_prompt(prompt, response_format="json", images=[body])` —
+  genuine visual input, not just a URL string in the prompt text.
+- **Type-stub trap**: the runtime's own type stubs advertise a singular
+  `image=` kwarg for JSON-mode calls, but the actual implementation only
+  ever reads `images=` (plural, list) regardless of `response_format`.
+  Passing `image=` singular is silently a no-op — confirmed by testing on
+  the pinned runner, not by trusting the stubs.
+- Proven with two throwaway-contract tests before touching production: a
+  solid-color image correctly identified by color, and a real meme
+  ("Woman Yelling at Cat") correctly described in detail with zero textual
+  hints available. Then verified end-to-end in production with a zero-hint
+  test image whose evaluation summary correctly described its actual
+  visual content (a plain blue triangle).
+- The plagiarism-detection task now reasons from actual visual evidence
+  (watermarks, screenshot chrome, pixel-identical duplication) instead of
+  only URL/filename patterns.
 
 ## Real GEN value transfer (added — read before touching money paths)
 - Contract methods: `create_competition` and `fund_competition` are
