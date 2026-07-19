@@ -7,6 +7,7 @@ import { limit } from "../middleware/rateLimit";
 import { decryptPrivateKey } from "../lib/walletCrypto";
 import * as gl from "../services/genlayer";
 import { logger } from "../lib/logger";
+import { scheduleClose } from "../jobs/weekly";
 
 export const competitionsRouter = Router();
 
@@ -81,6 +82,7 @@ competitionsRouter.post(
           where: { id },
           data: { onchainCreated: true },
         });
+        scheduleClose(id, comp.endsAt);
       } catch (err) {
         logger.error(
           { err: (err as Error).message, comp: id },

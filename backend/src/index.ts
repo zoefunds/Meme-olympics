@@ -12,7 +12,7 @@ import { disputesRouter } from "./routes/disputes";
 import { rewardsRouter } from "./routes/rewards";
 import { adminRouter } from "./routes/admin";
 import { uploadsRouter, imagesRouter } from "./routes/uploads";
-import { startSchedulers, runWeeklyRollover } from "./jobs/weekly";
+import { startSchedulers, runWeeklyRollover, armPendingCloseTimers } from "./jobs/weekly";
 
 const app = express();
 
@@ -86,5 +86,11 @@ app.listen(config.port, "0.0.0.0", () => {
   // Ensure a competition exists on boot (idempotent).
   runWeeklyRollover().catch((e) =>
     logger.error({ err: e.message }, "boot rollover failed")
+  );
+  // In-memory close timers don't survive a restart — re-arm exact-time
+  // timers for every currently-open arena so deadlines stay precise
+  // across deploys instead of silently falling back to sweep-only timing.
+  armPendingCloseTimers().catch((e) =>
+    logger.error({ err: e.message }, "boot timer arming failed")
   );
 });

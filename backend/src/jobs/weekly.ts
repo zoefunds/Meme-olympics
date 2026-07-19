@@ -3,10 +3,13 @@
  *
  * Schedule (UTC):
  *  - Monday 00:05 — rollover: open a new official weekly arena
- *  - every minute — deadline sweep: close any arena whose deadline just
- *    passed, judge its submissions, and finalize once judging is complete —
- *    all in the same tick, so the full pipeline runs within ~1 minute of
- *    the deadline instead of waiting on a hard-coded hourly schedule.
+ *  - exact-time — each competition gets its own setTimeout (armed at
+ *    creation, and re-armed for all open arenas on process startup) that
+ *    fires its close the instant endsAt hits, independent of any other
+ *    arena's judging load.
+ *  - every minute — deadline sweep: a fallback safety net that catches
+ *    any arena whose timer was lost (e.g. a deploy restarted the process
+ *    between scheduling and firing); also drives judging + finalization.
  *
  * All chain calls are operator-signed and idempotent against contract state.
  */
@@ -26,9 +29,31 @@ function isoWeekId(date = new Date()): string {
 }
 
 /**
- * Close any 'open' competition whose deadline has passed, moving it into
- * judging both in the DB and on-chain. Runs every minute so a deadline is
- * acted on almost immediately rather than waiting on an hourly tick.
+ * Close a single competition (idempotent — a no-op if it's already past
+ * 'open'). Shared by the exact-time timer (fires the instant a deadline
+ * hits) and the per-minute sweep (a safety net for timers lost to a
+ * restart/deploy between scheduling and firing).
+ */
+async function closeCompetition(id: string) {
+  const comp = await prisma.competition.findUnique({ where: { id } });
+  if (!comp || comp.status !== "open") return;
+  await prisma.competition.update({ where: { id }, data: { status: "judging" } });
+  if (gl.isChainConfigured() && comp.onchainCreated) {
+    try {
+      await gl.closeSubmissionsOnChain(id);
+    } catch (err) {
+      logger.error({ comp: id, err: (err as Error).message }, "close_submissions failed");
+    }
+  }
+  logger.info({ comp: id }, "competition closed at deadline");
+}
+
+/**
+ * Close any 'open' competition whose deadline has passed. This is now the
+ * fallback path — the common case is the exact-time timer in
+ * scheduleClose() firing the instant a deadline hits. This sweep only
+ * catches arenas whose timer was lost (e.g. a deploy restarted the
+ * process between scheduling and firing).
  */
 export async function runDeadlineClose() {
   const now = new Date();
@@ -36,23 +61,61 @@ export async function runDeadlineClose() {
     where: { status: "open", endsAt: { lte: now } },
   });
   for (const comp of expired) {
-    await prisma.competition.update({
-      where: { id: comp.id },
-      data: { status: "judging" },
-    });
-    if (gl.isChainConfigured() && comp.onchainCreated) {
-      try {
-        await gl.closeSubmissionsOnChain(comp.id);
-      } catch (err) {
-        logger.error(
-          { comp: comp.id, err: (err as Error).message },
-          "close_submissions failed"
-        );
-      }
-    }
-    logger.info({ comp: comp.id }, "competition closed at deadline");
+    await closeCompetition(comp.id);
   }
   return { closed: expired.map((c) => c.id) };
+}
+
+// setTimeout's delay is a signed 32-bit int (~24.8 days max) — clamp and
+// re-arm in chunks so multi-day arena deadlines don't overflow into an
+// immediate fire.
+const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+const closeTimers = new Map<string, NodeJS.Timeout>();
+
+/**
+ * Arm an exact-time timer for a single competition's deadline, so its
+ * close fires the instant endsAt hits rather than waiting on the next
+ * minute-sweep tick. Safe to call multiple times for the same id (the
+ * previous timer is replaced).
+ */
+export function scheduleClose(id: string, endsAt: Date) {
+  const existing = closeTimers.get(id);
+  if (existing) clearTimeout(existing);
+
+  const fire = () => {
+    closeTimers.delete(id);
+    void closeCompetition(id);
+  };
+
+  const delay = endsAt.getTime() - Date.now();
+  if (delay <= 0) {
+    fire();
+    return;
+  }
+  if (delay > MAX_TIMEOUT_MS) {
+    // Too far out for one setTimeout — check back in before the cap and
+    // re-arm with the remaining delay.
+    closeTimers.set(
+      id,
+      setTimeout(() => scheduleClose(id, endsAt), MAX_TIMEOUT_MS)
+    );
+    return;
+  }
+  closeTimers.set(id, setTimeout(fire, delay));
+}
+
+/**
+ * On process startup, re-arm exact-time timers for every currently-open
+ * competition — in-memory timers don't survive a restart/deploy, so this
+ * is what keeps deadlines exact across deploys instead of silently
+ * falling back to sweep-only (up to 1 minute) precision.
+ */
+export async function armPendingCloseTimers() {
+  const open = await prisma.competition.findMany({ where: { status: "open" } });
+  for (const comp of open) {
+    scheduleClose(comp.id, comp.endsAt);
+  }
+  logger.info({ count: open.length }, "armed exact-time close timers");
 }
 
 export async function runWeeklyRollover() {
@@ -94,6 +157,7 @@ export async function runWeeklyRollover() {
         logger.error({ err: (err as Error).message }, "on-chain rollover failed");
       }
     }
+    scheduleClose(newId, endsAt);
   }
   logger.info({ competition: newId }, "weekly rollover complete");
   return { opened: newId };
