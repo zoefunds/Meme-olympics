@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import { api, getUser } from "@/lib/api";
 import { GlassCard, MonoLabel, PrestigeButton, GhostButton, TerminalField } from "@/components/ui";
 
+type Balances = { walletBalance: number; onchainBalance: number };
+
 export default function Settings() {
   const router = useRouter();
   const user = typeof window !== "undefined" ? getUser() : null;
@@ -12,10 +14,22 @@ export default function Settings() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [revealed, setRevealed] = useState(false);
+  const [balances, setBalances] = useState<Balances | null>(null);
 
   useEffect(() => {
     if (!getUser()) router.push("/login");
   }, [router]);
+
+  useEffect(() => {
+    if (!getUser()) return;
+    const load = () =>
+      api<Balances>("/api/rewards/me").then(setBalances).catch(() => undefined);
+    load();
+    // Real-time-ish: poll so a claim, a new stake, or a received transfer
+    // shows up here without a manual reload.
+    const id = setInterval(load, 10000);
+    return () => clearInterval(id);
+  }, []);
 
   async function exportKey(e: React.FormEvent) {
     e.preventDefault();
@@ -57,6 +71,37 @@ export default function Settings() {
             <span className="break-all text-cyan-soft text-xs">{user?.walletAddress}</span>
           </div>
         </div>
+      </GlassCard>
+
+      <GlassCard className="p-8" scan>
+        <h2 className="font-display font-semibold text-xl mb-4">GEN Balance</h2>
+        {balances ? (
+          <div className="grid grid-cols-2 gap-4 font-mono">
+            <div className="bg-black/30 rounded-lg p-4 border border-white/5">
+              <MonoLabel className="text-on-variant text-[10px] block mb-1">
+                WALLET (spendable)
+              </MonoLabel>
+              <p className="font-display font-bold text-cyan-soft text-2xl">
+                {balances.walletBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              </p>
+            </div>
+            <div className="bg-black/30 rounded-lg p-4 border border-white/5">
+              <MonoLabel className="text-on-variant text-[10px] block mb-1">
+                CLAIMABLE (escrow)
+              </MonoLabel>
+              <p className="font-display font-bold text-gold-soft text-2xl">
+                {balances.onchainBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <p className="font-mono text-sm text-on-variant">Loading balance…</p>
+        )}
+        <p className="text-on-variant text-xs mt-4">
+          Updates automatically every 10 seconds. Claimable GEN sits in the
+          contract's escrow until you claim it from the{" "}
+          <a href="/rewards" className="text-gold-soft underline">Rewards page</a>.
+        </p>
       </GlassCard>
 
       <GlassCard className="p-8 border-gold/20" scan>
