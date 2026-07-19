@@ -189,16 +189,23 @@ competitionsRouter.get("/active", async (_req, res) => {
   return res.json(payload);
 });
 
-// GET /api/competitions/:id
+// GET /api/competitions/:id — the Arena Detail page's main call, and its
+// heaviest-hit read (page load + every poll tick). Short TTL so status
+// changes (open → judging → finalized) still surface promptly.
 competitionsRouter.get("/:id", async (req, res) => {
+  const key = `comp:${req.params.id}`;
+  const cached = await cacheGet(key);
+  if (cached) return res.json(JSON.parse(cached));
   const comp = await prisma.competition.findUnique({
     where: { id: req.params.id },
   });
   if (!comp) return res.status(404).json({ error: "Competition not found" });
-  return res.json({
+  const payload = {
     ...comp,
     winners: JSON.parse(comp.winnersJson || "[]"),
-  });
+  };
+  await cacheSet(key, JSON.stringify(payload), 15_000);
+  return res.json(payload);
 });
 
 // GET /api/competitions/:id/leaderboard — cached 60s

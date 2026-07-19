@@ -31,6 +31,8 @@ export const metadata: Metadata = {
   },
 };
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+
 export default function RootLayout({
   children,
 }: {
@@ -38,6 +40,15 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark">
+      <head>
+        {/* The API lives on a separate origin (Fly) from this app (Vercel),
+            so the browser doesn't open that connection until the first
+            fetch fires. Preconnecting here starts the DNS+TLS handshake
+            immediately in parallel with page render, instead of adding
+            that cost to the first data request. */}
+        <link rel="preconnect" href={API_URL} crossOrigin="anonymous" />
+        <link rel="dns-prefetch" href={API_URL} />
+      </head>
       <body
         className={`${grotesk.variable} ${inter.variable} ${jetbrains.variable} font-body corner-glows min-h-screen`}
       >

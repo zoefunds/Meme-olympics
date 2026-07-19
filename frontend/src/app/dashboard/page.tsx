@@ -29,6 +29,7 @@ const STATUS_TONE: Record<string, "cyan" | "gold" | "muted"> = {
 export default function Dashboard() {
   const router = useRouter();
   const [subs, setSubs] = useState<Sub[]>([]);
+  const [loading, setLoading] = useState(true);
   const user = typeof window !== "undefined" ? getUser() : null;
 
   useEffect(() => {
@@ -36,7 +37,8 @@ export default function Dashboard() {
     const load = () =>
       api<{ submissions: Sub[] }>("/api/submissions/mine")
         .then((r) => setSubs(r.submissions))
-        .catch(() => undefined);
+        .catch(() => undefined)
+        .finally(() => setLoading(false));
     load();
     // Judging happens async on-chain (30-60s per meme) — poll so status
     // moves from pending -> onchain -> evaluated without a manual reload.
@@ -95,7 +97,11 @@ export default function Dashboard() {
       {/* Submissions */}
       <section>
         <h2 className="font-display font-semibold text-2xl mb-6 uppercase">My Entries</h2>
-        {subs.length === 0 ? (
+        {loading ? (
+          <GlassCard className="p-12 text-center" scan>
+            <p className="font-mono text-sm text-on-variant">Loading your entries…</p>
+          </GlassCard>
+        ) : subs.length === 0 ? (
           <GlassCard className="p-12 text-center">
             <p className="font-mono text-sm text-on-variant">
               No entries yet. <Link href="/submit" className="text-gold-soft">Enter the arena →</Link>
