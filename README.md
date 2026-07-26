@@ -5,7 +5,7 @@ Intelligent Contract validator consensus — not likes, not votes, only logic.**
 
 - **Live app:** https://meme-olympics.vercel.app
 - **API:** https://meme-olympics-api.fly.dev (Fly.io, always-on)
-- **Intelligent Contract (StudioNet):** `0x4EA07970855FeA17567693103610A25cd25aD159`
+- **Intelligent Contract (StudioNet):** `0xa1439a103Ff8b1eBfa13Ea95626E2fA269e8F016`
 
 Anyone can host an arena — set a theme, a deadline, and a real GEN prize pool
 staked from their own wallet at creation. Anyone can submit one meme per
@@ -74,14 +74,14 @@ sequenceDiagram
   participant V as Validators
   U->>API: Submit meme (title, lore, image upload/URL, tags)
   API->>C: submit_meme — signed by the user's own wallet
-  Note over API,C: 1 submission per user per arena; duplicate image URLs rejected in DB AND on-chain
+  Note over API,C: 1 submission per user per arena, duplicate image URLs rejected in DB and on-chain
   Note over API,C: Arena deadline hits — a per-arena timer fires close_submissions the instant endsAt is reached
   API->>C: evaluate_submission — one submission at a time, each fully finalized on-chain before the next starts
   C->>L: fetch image bytes on-chain + vision LLM judging (9 criteria + plagiarism)
   C->>V: every validator re-runs the SAME task independently, seeing the SAME image
   V-->>C: agree iff score ±15, 7/9 criteria ±5, DQ-gate matches
-  C->>C: store verdict deterministically; once all submissions are judged, finalize picks winners
-  API->>U: Brevo email with the consensus result; winner can claim real GEN from the contract
+  C->>C: store verdict deterministically, once all submissions are judged, finalize picks winners
+  API->>U: Brevo email with the consensus result, winner can claim real GEN from the contract
 ```
 
 ## Product features

@@ -57,7 +57,7 @@ votes. One serious project, one robust contract.
 
 ## Deployment status
 - [x] Repo: https://github.com/zoefunds/Meme-olympics (no Claude attribution)
-- [x] Contract deployed to StudioNet (CURRENT): `0x4EA07970855FeA17567693103610A25cd25aD159`
+- [x] Contract deployed to StudioNet (CURRENT): `0xa1439a103Ff8b1eBfa13Ea95626E2fA269e8F016`
       (owner/deployer: the user's own wallet, deployed via Studio UI — the
       user deploys the contract themselves every time, never me).
       Supports REAL GEN value transfer, creator-can-finalize, permissionless
