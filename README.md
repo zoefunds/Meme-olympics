@@ -5,7 +5,7 @@ Intelligent Contract validator consensus — not likes, not votes, only logic.**
 
 - **Live app:** https://meme-olympics.vercel.app
 - **API:** https://meme-olympics-api.fly.dev (Fly.io, always-on)
-- **Intelligent Contract (StudioNet):** `0x4EA07970855FeA17567693103610A25cd25aD159`
+- **Intelligent Contract (StudioNet):** `0xa1439a103Ff8b1eBfa13Ea95626E2fA269e8F016`
 
 Anyone can host an arena — set a theme, a deadline, and a real GEN prize pool
 staked from their own wallet at creation. Anyone can submit one meme per
