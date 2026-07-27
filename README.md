@@ -4,7 +4,7 @@
 Intelligent Contract validator consensus — not likes, not votes, only logic.**
 
 - **Live app:** https://meme-olympics.vercel.app
-- **API:** https://meme-olympics-api.fly.dev (Fly.io, always-on)
+- **API:** https://meme-olympics-api-prod.fly.dev (Fly.io, always-on)
 - **Intelligent Contract (StudioNet):** `0xa1439a103Ff8b1eBfa13Ea95626E2fA269e8F016`
 
 Anyone can host an arena — set a theme, a deadline, and a real GEN prize pool
@@ -173,6 +173,23 @@ sequenceDiagram
 
 ## Operational reliability (learned the hard way, all handled)
 
+- **Authoritative on-chain lifecycle** — nothing user-visible is persisted
+  ahead of a confirmed contract write. Competition creation (both user-hosted
+  and admin-created) deletes the DB row if `create_competition`/
+  `open_competition` fails rather than leaving an orphaned "open" arena with
+  no path to close or finalize. Disputes only flip `onchainOpened: true`
+  once `openDisputeOnChain` actually succeeds — the flag that
+  `retryDisputeRegistrationSweep` checks before retrying, so a
+  never-confirmed open no longer causes duplicate on-chain writes forever.
+  Deadlines are enforced twice: `runJudgingSweep` never evaluates a
+  submission until its competition is already `judging` **and** `endsAt`
+  has passed, and the submission route itself rejects new entries the
+  moment `endsAt` passes even in the narrow window before the close timer
+  fires. Four independent retry sweeps
+  (`retryOnchainCreationSweep`, `retrySubmissionRegistrationSweep`,
+  `retryDisputeRegistrationSweep`, `runFinalization`) run every tick in
+  [`weekly.ts`](backend/src/jobs/weekly.ts) to reconcile anything a failed
+  chain call left stuck. See [REVIEW.md](REVIEW.md) for the full writeup.
 - **Duplicate-action safety** — judging is read-before-act: the sweep reads
   on-chain state first and only sends an evaluate tx for genuinely un-judged
   submissions; already-processed ones sync without any transaction. After
@@ -266,6 +283,19 @@ npm install && npx prisma migrate dev && npm run dev   # :8080
 cd ../frontend && npm install
 NEXT_PUBLIC_API_URL=http://localhost:8080 npm run dev  # :3000
 ```
+
+## Testing
+
+```bash
+cd backend && npm test   # vitest — 24 tests, in-memory fake Prisma + fake GenLayer service
+```
+
+Covers the payout-critical lifecycle: no early close/scoring before a
+deadline, orphan-safe competition creation, idempotent close, on-chain
+creation/submission/dispute retry sweeps, no partial or early payout while
+submissions are still unprocessed, and payout only recorded once finalize
+is on-chain confirmed. See [REVIEW.md](REVIEW.md) for what each test
+guards against.
 
 ## Deploying
 
