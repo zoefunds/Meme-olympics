@@ -219,7 +219,8 @@ export default function MemeDetail() {
               </div>
             ) : (
               <p className="font-mono text-xs text-on-variant">
-                &gt; Awaiting validator consensus — judging sweeps run hourly.
+                &gt; Awaiting validator consensus — judging sweeps run
+                continuously once this arena closes at its weekly deadline.
                 Leader scores first, then every validator independently
                 re-judges before anything settles.
               </p>

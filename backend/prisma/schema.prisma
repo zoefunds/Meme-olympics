@@ -85,15 +85,16 @@ model Submission {
 }
 
 model Dispute {
-  id           String     @id @default(cuid())
-  submissionId String
-  userId       String
-  reason       String
-  evidenceUrl  String
-  status       String     @default("open") // open|upheld|rejected
-  verdict      String     @default("")
-  createdAt    DateTime   @default(now())
-  resolvedAt   DateTime?
+  id             String     @id @default(cuid())
+  submissionId   String
+  userId         String
+  reason         String
+  evidenceUrl    String
+  status         String     @default("open") // open|upheld|rejected
+  verdict        String     @default("")
+  onchainOpened  Boolean    @default(false) // true only once open_dispute is confirmed on-chain
+  createdAt      DateTime   @default(now())
+  resolvedAt     DateTime?
   submission   Submission @relation(fields: [submissionId], references: [id])
   user         User       @relation(fields: [userId], references: [id])
 

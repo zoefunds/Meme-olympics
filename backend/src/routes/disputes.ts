@@ -49,8 +49,16 @@ disputesRouter.post(
           evidenceUrl,
           new Date().toISOString()
         );
+        // Only mark confirmed once the chain call actually succeeds — a
+        // dispute still onchainOpened=false is what retryDisputeRegistrationSweep
+        // looks for, so leaving this unset on failure is what makes the retry
+        // sweep pick it up instead of the dispute silently going unopened.
+        await prisma.dispute.update({
+          where: { id: dispute.id },
+          data: { onchainOpened: true },
+        });
       } catch (err) {
-        logger.error({ err: (err as Error).message }, "on-chain dispute failed");
+        logger.error({ err: (err as Error).message }, "on-chain dispute failed; will retry");
       }
     }
 

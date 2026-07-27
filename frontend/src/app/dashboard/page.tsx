@@ -146,7 +146,8 @@ export default function Dashboard() {
                   )}
                   {["pending", "onchain"].includes(s.status) && (
                     <p className="font-mono text-[11px] text-on-variant receipt-divider pt-3">
-                      In the validator queue — consensus judging runs hourly.
+                      In the validator queue — judging starts once this
+                      arena's weekly deadline closes it, then runs continuously.
                     </p>
                   )}
                 </div>

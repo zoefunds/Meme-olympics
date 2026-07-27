@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireAuth, requireAdmin, AuthedRequest } from "../middleware/auth";
 import * as gl from "../services/genlayer";
-import { runWeeklyRollover, runJudgingSweep } from "../jobs/weekly";
+import { runWeeklyRollover, runJudgingSweep, scheduleClose } from "../jobs/weekly";
 
 export const adminRouter = Router();
 
@@ -62,13 +62,25 @@ adminRouter.post("/competitions", async (req: AuthedRequest, res: Response) => {
   });
 
   if (gl.isChainConfigured()) {
-    await gl.createCompetitionOnChain(d.id, d.title, d.theme, d.startsAt, d.endsAt);
-    if (d.open) await gl.openCompetitionOnChain(d.id);
-    await prisma.competition.update({
-      where: { id: d.id },
-      data: { onchainCreated: true },
-    });
+    try {
+      await gl.createCompetitionOnChain(d.id, d.title, d.theme, d.startsAt, d.endsAt);
+      if (d.open) await gl.openCompetitionOnChain(d.id);
+      await prisma.competition.update({
+        where: { id: d.id },
+        data: { onchainCreated: true },
+      });
+    } catch (err) {
+      // Same rule as the user-hosted creation path: a row that never
+      // confirmed on-chain must not be left dangling as a live "open"
+      // arena — judging/finalization both require onchainCreated=true, so
+      // an unconfirmed row here has no path to close/finalize.
+      await prisma.competition.delete({ where: { id: d.id } }).catch(() => undefined);
+      return res.status(502).json({
+        error: "On-chain competition creation failed; not created. " + (err as Error).message,
+      });
+    }
   }
+  if (d.open) scheduleClose(d.id, comp.endsAt);
   return res.status(201).json({ competition: comp });
 });
 

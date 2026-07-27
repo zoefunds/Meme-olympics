@@ -33,7 +33,10 @@ submissionsRouter.post(
     const comp = await prisma.competition.findUnique({
       where: { id: data.competitionId },
     });
-    if (!comp || comp.status !== "open") {
+    // Deadline is enforced here too, not just by the close scheduler — a
+    // submission must never be accepted after endsAt even in the narrow
+    // window before that arena's close timer has actually fired.
+    if (!comp || comp.status !== "open" || comp.endsAt <= new Date()) {
       return res.status(400).json({ error: "Competition is not open" });
     }
 

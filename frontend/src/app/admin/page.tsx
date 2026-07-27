@@ -77,8 +77,9 @@ export default function Admin() {
           </GhostButton>
         </div>
         <p className="font-mono text-[11px] text-on-variant mt-4">
-          These also run automatically: rollover Mondays 00:05 UTC, judging
-          hourly at :15, finalization hourly at :45.
+          These also run automatically: rollover Mondays 00:05 UTC; close,
+          judging and finalization all kick in as soon as an arena's weekly
+          deadline passes, not on any fixed hourly/minute-based clock.
         </p>
       </GlassCard>
 

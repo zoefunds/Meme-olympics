@@ -18,6 +18,7 @@ import { prisma } from "../lib/prisma";
 import * as gl from "../services/genlayer";
 import { logger } from "../lib/logger";
 import { sendEvaluationEmail, sendWinnerEmail } from "../services/email";
+import { decryptPrivateKey } from "../lib/walletCrypto";
 
 function isoWeekId(date = new Date()): string {
   const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
@@ -28,6 +29,27 @@ function isoWeekId(date = new Date()): string {
   return `week-${d.getUTCFullYear()}-${String(week).padStart(2, "0")}`;
 }
 
+function isMissingOnchainCompetition(err: unknown): boolean {
+  return /Competition not found/i.test((err as Error).message || "");
+}
+
+function isMissingOnchainCompetitionRead(err: unknown): boolean {
+  return /Competition not found|execution failed|unknown RPC error/i.test(
+    (err as Error).message || ""
+  );
+}
+
+async function markCompetitionDetachedFromChain(id: string) {
+  await prisma.competition.update({
+    where: { id },
+    data: { onchainCreated: false, onchainFinalized: false },
+  });
+  logger.warn(
+    { comp: id },
+    "competition does not exist on current contract; detached from on-chain lifecycle"
+  );
+}
+
 /**
  * Close a single competition (idempotent — a no-op if it's already past
  * 'open'). Shared by the exact-time timer (fires the instant a deadline
@@ -35,17 +57,170 @@ function isoWeekId(date = new Date()): string {
  * restart/deploy between scheduling and firing).
  */
 async function closeCompetition(id: string) {
+  const now = new Date();
   const comp = await prisma.competition.findUnique({ where: { id } });
-  if (!comp || comp.status !== "open") return;
-  await prisma.competition.update({ where: { id }, data: { status: "judging" } });
-  if (gl.isChainConfigured() && comp.onchainCreated) {
+  if (!comp || comp.status !== "open" || comp.endsAt > now) return;
+  if (gl.isChainConfigured()) {
+    // A competition that never confirmed on-chain has nothing to close and
+    // must NOT be allowed to progress to 'judging' — judging/finalization
+    // both require onchainCreated=true, so flipping status here regardless
+    // would create an arena stuck in judging forever with no path to
+    // finalize. Leave it open; retryOnchainCreationSweep() will keep
+    // attempting the on-chain creation on every tick until it lands (or an
+    // operator intervenes) before this can ever close.
+    if (!comp.onchainCreated) {
+      logger.error(
+        { comp: id },
+        "cannot close: competition never confirmed on-chain; leaving open for reconciliation"
+      );
+      return;
+    }
     try {
       await gl.closeSubmissionsOnChain(id);
     } catch (err) {
+      if (isMissingOnchainCompetition(err)) {
+        await markCompetitionDetachedFromChain(id);
+        return;
+      }
       logger.error({ comp: id, err: (err as Error).message }, "close_submissions failed");
+      return;
     }
   }
+  await prisma.competition.update({ where: { id }, data: { status: "judging" } });
   logger.info({ comp: id }, "competition closed at deadline");
+}
+
+/**
+ * Retry on-chain creation for any 'open' competition that never confirmed
+ * on-chain (onchainCreated=false) — reachable only via system-created
+ * arenas (weekly rollover) or a contract switch reconciliation, since
+ * user-hosted creation now rolls back its DB row on failure instead of
+ * leaving one behind. Runs every close tick so a transient RPC failure at
+ * creation time self-heals well before the deadline arrives.
+ */
+export async function retryOnchainCreationSweep() {
+  if (!gl.isChainConfigured()) return { retried: [] as string[] };
+  const stuck = await prisma.competition.findMany({
+    where: { status: "open", onchainCreated: false },
+  });
+  const retried: string[] = [];
+  for (const comp of stuck) {
+    try {
+      await gl.createCompetitionOnChain(
+        comp.id,
+        comp.title,
+        comp.theme,
+        comp.startsAt.toISOString(),
+        comp.endsAt.toISOString()
+      );
+      await gl.openCompetitionOnChain(comp.id);
+      await prisma.competition.update({
+        where: { id: comp.id },
+        data: { onchainCreated: true },
+      });
+      scheduleClose(comp.id, comp.endsAt);
+      retried.push(comp.id);
+      logger.info({ comp: comp.id }, "on-chain creation retry succeeded");
+    } catch (err) {
+      logger.warn(
+        { comp: comp.id, err: (err as Error).message },
+        "on-chain creation retry failed; will retry next tick"
+      );
+    }
+  }
+  return { retried };
+}
+
+/**
+ * Retry the initial on-chain registration for submissions whose
+ * submitMemeOnChain call failed at submit time (status still 'pending',
+ * no tx hash). Without this, such a row was only ever discovered once its
+ * competition closed and judging tried to read it — by then it's too late
+ * to register, and it silently times out as 'failed' after 30 minutes with
+ * zero retry attempts in between. This sweep gives it real chances to
+ * land before that timeout is reached.
+ */
+export async function retrySubmissionRegistrationSweep() {
+  if (!gl.isChainConfigured()) return { retried: [] as string[] };
+  const stuck = await prisma.submission.findMany({
+    where: {
+      status: "pending",
+      onchainTxHash: "",
+      createdAt: { gte: new Date(Date.now() - 30 * 60 * 1000) },
+      competition: { status: { in: ["open", "judging"] } },
+    },
+    include: { user: true },
+    take: 10,
+  });
+  const retried: string[] = [];
+  for (const sub of stuck) {
+    try {
+      const txHash = await gl.submitMemeOnChain(
+        decryptPrivateKey(sub.user.encryptedPrivateKey),
+        sub.competitionId,
+        sub.id,
+        sub.title,
+        sub.caption,
+        sub.imageUrl,
+        sub.contextUrl,
+        sub.tagsJson,
+        sub.createdAt.toISOString()
+      );
+      await prisma.submission.update({
+        where: { id: sub.id },
+        data: { status: "onchain", onchainTxHash: txHash },
+      });
+      retried.push(sub.id);
+      logger.info({ sub: sub.id }, "submission registration retry succeeded");
+    } catch (err) {
+      logger.warn(
+        { sub: sub.id, err: (err as Error).message },
+        "submission registration retry failed; will retry next tick"
+      );
+    }
+  }
+  return { retried };
+}
+
+/**
+ * Retry the initial on-chain open_dispute call for disputes whose
+ * registration failed at creation time (onchainOpened=false) — same
+ * reasoning as submission registration: without an active retry, a
+ * transient failure here leaves a dispute permanently unresolvable
+ * on-chain with no visible sign anything is wrong.
+ */
+export async function retryDisputeRegistrationSweep() {
+  if (!gl.isChainConfigured()) return { retried: [] as string[] };
+  const stuck = await prisma.dispute.findMany({
+    where: { status: "open", onchainOpened: false },
+    include: { user: true },
+    take: 10,
+  });
+  const retried: string[] = [];
+  for (const dispute of stuck) {
+    try {
+      await gl.openDisputeOnChain(
+        decryptPrivateKey(dispute.user.encryptedPrivateKey),
+        dispute.id,
+        dispute.submissionId,
+        dispute.reason,
+        dispute.evidenceUrl,
+        dispute.createdAt.toISOString()
+      );
+      await prisma.dispute.update({
+        where: { id: dispute.id },
+        data: { onchainOpened: true },
+      });
+      retried.push(dispute.id);
+      logger.info({ dispute: dispute.id }, "dispute registration retry succeeded");
+    } catch (err) {
+      logger.warn(
+        { dispute: dispute.id, err: (err as Error).message },
+        "dispute registration retry failed; will retry next tick"
+      );
+    }
+  }
+  return { retried };
 }
 
 /**
@@ -139,14 +314,43 @@ export async function runWeeklyRollover() {
         endsAt,
       },
     });
-    if (gl.isChainConfigured()) {
+  }
+
+  if (gl.isChainConfigured()) {
+    let existsOnCurrentContract = false;
+    try {
+      const onchain = (await gl.getOnchainCompetition(newId)) as { status: string };
+      existsOnCurrentContract = true;
+      if (onchain.status === "created") {
+        await gl.openCompetitionOnChain(newId);
+      }
+      if (!comp.onchainCreated) {
+        await prisma.competition.update({
+          where: { id: newId },
+          data: { onchainCreated: true },
+        });
+      }
+    } catch (err) {
+      if (isMissingOnchainCompetitionRead(err)) {
+        if (comp.onchainCreated) {
+          await markCompetitionDetachedFromChain(newId);
+        }
+      } else {
+        logger.warn(
+          { competition: newId, err: (err as Error).message },
+          "could not verify weekly competition on current contract"
+        );
+      }
+    }
+
+    if (!existsOnCurrentContract && comp.status === "open" && comp.endsAt > now) {
       try {
         await gl.createCompetitionOnChain(
           newId,
           comp.title,
           comp.theme,
-          now.toISOString(),
-          endsAt.toISOString()
+          comp.startsAt.toISOString(),
+          comp.endsAt.toISOString()
         );
         await gl.openCompetitionOnChain(newId);
         await prisma.competition.update({
@@ -157,10 +361,27 @@ export async function runWeeklyRollover() {
         logger.error({ err: (err as Error).message }, "on-chain rollover failed");
       }
     }
-    scheduleClose(newId, endsAt);
   }
+
+  if (comp.status === "open") {
+    scheduleClose(newId, comp.endsAt);
+  }
+
   logger.info({ competition: newId }, "weekly rollover complete");
   return { opened: newId };
+}
+
+async function ensureCompetitionExistsOnCurrentContract(id: string): Promise<boolean> {
+  try {
+    await gl.getOnchainCompetition(id);
+    return true;
+  } catch (err) {
+    if (isMissingOnchainCompetitionRead(err)) {
+      await markCompetitionDetachedFromChain(id);
+      return false;
+    }
+    throw err;
+  }
 }
 
 /** Evaluate on-chain submissions that haven't been judged yet, then sync results.
@@ -174,7 +395,11 @@ export async function runJudgingSweep() {
   const pending = await prisma.submission.findMany({
     where: {
       status: { in: ["pending", "onchain"] },
-      competition: { status: "judging" },
+      competition: {
+        status: "judging",
+        endsAt: { lte: new Date() },
+        onchainCreated: true,
+      },
     },
     orderBy: { createdAt: "desc" }, // newest first — stale rows can't starve the batch
     take: 10, // bounded batch: judging is LLM-heavy on-chain
@@ -184,6 +409,8 @@ export async function runJudgingSweep() {
   let evaluated = 0;
   for (const sub of pending) {
     try {
+      const exists = await ensureCompetitionExistsOnCurrentContract(sub.competitionId);
+      if (!exists) continue;
       // READ-BEFORE-ACT: never send a duplicate evaluate transaction.
       // Only a genuinely un-judged on-chain submission gets an evaluate tx;
       // anything already processed is synced without touching the chain.
@@ -251,7 +478,9 @@ export async function runJudgingSweep() {
 /** Finalize competitions stuck in judging whose submissions are all processed. */
 export async function runFinalization() {
   if (!gl.isChainConfigured()) return { finalized: [] as string[] };
-  const judging = await prisma.competition.findMany({ where: { status: "judging" } });
+  const judging = await prisma.competition.findMany({
+    where: { status: "judging", endsAt: { lte: new Date() }, onchainCreated: true },
+  });
   const finalized: string[] = [];
 
   for (const comp of judging) {
@@ -261,6 +490,33 @@ export async function runFinalization() {
     if (unprocessed > 0) continue;
 
     try {
+      let onchainBefore: { status: string };
+      try {
+        onchainBefore = (await gl.getOnchainCompetition(comp.id)) as {
+          status: string;
+        };
+      } catch (err) {
+        if (isMissingOnchainCompetitionRead(err)) {
+          await markCompetitionDetachedFromChain(comp.id);
+          continue;
+        }
+        throw err;
+      }
+      if (onchainBefore.status === "open") {
+        await gl.closeSubmissionsOnChain(comp.id);
+        logger.info(
+          { comp: comp.id },
+          "repaired stale local judging state by closing on-chain competition"
+        );
+        continue;
+      }
+      if (onchainBefore.status !== "judging") {
+        logger.warn(
+          { comp: comp.id, onchainStatus: onchainBefore.status },
+          "skipping finalization because on-chain competition is not judging"
+        );
+        continue;
+      }
       await gl.finalizeCompetitionOnChain(comp.id, new Date().toISOString());
       // Same accepted-but-not-yet-readable lag we've hit elsewhere: a read
       // immediately after the finalize write can still return pre-finalize
@@ -307,6 +563,10 @@ export async function runFinalization() {
       }
       finalized.push(comp.id);
     } catch (err) {
+      if (isMissingOnchainCompetition(err)) {
+        await markCompetitionDetachedFromChain(comp.id);
+        continue;
+      }
       logger.error(
         { comp: comp.id, err: (err as Error).message },
         "finalization failed; will retry"

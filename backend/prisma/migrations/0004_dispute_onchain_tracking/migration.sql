@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Dispute" ADD COLUMN IF NOT EXISTS "onchainOpened" BOOLEAN NOT NULL DEFAULT false;

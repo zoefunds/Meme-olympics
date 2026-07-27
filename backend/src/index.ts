@@ -83,14 +83,15 @@ process.on("uncaughtException", (err) => {
 app.listen(config.port, "0.0.0.0", () => {
   logger.info({ port: config.port }, "Meme Olympics API listening");
   startSchedulers();
-  // Ensure a competition exists on boot (idempotent).
-  runWeeklyRollover().catch((e) =>
-    logger.error({ err: e.message }, "boot rollover failed")
-  );
-  // In-memory close timers don't survive a restart — re-arm exact-time
-  // timers for every currently-open arena so deadlines stay precise
-  // across deploys instead of silently falling back to sweep-only timing.
-  armPendingCloseTimers().catch((e) =>
-    logger.error({ err: e.message }, "boot timer arming failed")
-  );
+  void (async () => {
+    try {
+      // Ensure a competition exists on boot (idempotent), then verify and
+      // arm timers. Keep these sequential so contract-switch reconciliation
+      // cannot race against timer arming for the same open competition.
+      await runWeeklyRollover();
+      await armPendingCloseTimers();
+    } catch (e) {
+      logger.error({ err: (e as Error).message }, "boot lifecycle setup failed");
+    }
+  })();
 });

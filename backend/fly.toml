@@ -1,6 +1,6 @@
 # Meme Olympics API — Fly.io
 # 24/7 requirement: auto_stop_machines=false + min_machines_running=1
-app = "meme-olympics-api"
+app = "meme-olympics-api-prod"
 primary_region = "iad"
 
 [build]

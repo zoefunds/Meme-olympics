@@ -144,7 +144,7 @@ gl.vm.run_nondet_unsafe(leader_fn, validator_fn)`}</pre>
       </section>
 
       <div className="flex justify-center">
-        <StatusChip label="AI Judge Online — hourly consensus sweeps" />
+        <StatusChip label="AI Judge Online — continuous consensus sweeps" />
       </div>
     </main>
   );

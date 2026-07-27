@@ -84,9 +84,17 @@ competitionsRouter.post(
         });
         scheduleClose(id, comp.endsAt);
       } catch (err) {
+        // The lifecycle is authoritative on-chain: a competition that never
+        // confirmed on-chain must never be user-visible as a real, joinable
+        // "open" arena (it would accept submissions no judging sweep could
+        // ever act on, since judging/finalization both require
+        // onchainCreated=true — an orphan with no path to close/finalize).
+        // Delete rather than leave it dangling; nothing could have
+        // referenced it yet since the client never received its id.
+        await prisma.competition.delete({ where: { id } }).catch(() => undefined);
         logger.error(
           { err: (err as Error).message, comp: id },
-          "on-chain competition creation failed (kept off-chain)"
+          "on-chain competition creation failed; row rolled back"
         );
         return res.status(502).json({
           error:
