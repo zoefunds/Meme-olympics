@@ -7,6 +7,8 @@
  */
 type Row = Record<string, any>;
 
+let idCounter = 0;
+
 function matches(
   row: Row,
   where: Row = {},
@@ -78,7 +80,14 @@ class Table {
   }
 
   async create({ data }: { data: Row }) {
-    const row = { ...data, createdAt: data.createdAt || new Date(), updatedAt: new Date() };
+    const row = {
+      // Mimics Prisma's @default(cuid()) — models that pass an explicit id
+      // (e.g. GenLayer-matched competition/submission ids) keep it.
+      id: data.id ?? `fake_${this.name}_${++idCounter}`,
+      ...data,
+      createdAt: data.createdAt || new Date(),
+      updatedAt: new Date(),
+    };
     this.rows.push(row);
     return { ...row };
   }

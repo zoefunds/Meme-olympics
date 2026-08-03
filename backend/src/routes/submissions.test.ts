@@ -16,15 +16,15 @@ vi.mock("../services/genlayer", () => ({
   get isChainConfigured() {
     return fakeGl.isChainConfigured;
   },
-  get submitMemeOnChain() {
-    return fakeGl.submitMemeOnChain;
+  get getOnchainSubmission() {
+    return fakeGl.getOnchainSubmission;
+  },
+  get readUntilFound() {
+    return fakeGl.readUntilFound;
   },
 }));
 vi.mock("../lib/logger", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
-}));
-vi.mock("../lib/walletCrypto", () => ({
-  decryptPrivateKey: () => "fake-private-key",
 }));
 vi.mock("../lib/redis", () => ({
   rateLimit: () => Promise.resolve(true),
@@ -74,11 +74,11 @@ describe("POST /api/submissions", () => {
       },
     });
     await fakePrisma.user.create({
-      data: { id: "u1", email: "a@a.com", encryptedPrivateKey: "k", walletAddress: "0x1" },
+      data: { id: "u1", authAddress: "0x1", walletAddress: "0x1" },
     });
   }
 
-  it("accepts a submission to a genuinely open, non-expired competition", async () => {
+  it("registers a submission row for a genuinely open, non-expired competition — the on-chain write is signed by the user's own wallet from the frontend", async () => {
     await seedOpenCompetition();
 
     const res = await request(makeApp()).post("/api/submissions").send({
@@ -88,8 +88,7 @@ describe("POST /api/submissions", () => {
     });
 
     expect(res.status).toBe(201);
-    expect(res.body.submission.status).toBe("onchain");
-    expect(fakeGl.submitMemeOnChain).toHaveBeenCalled();
+    expect(res.body.submission.status).toBe("pending");
   });
 
   it("rejects a submission once the deadline has passed, even if status row still says 'open'", async () => {
@@ -103,7 +102,6 @@ describe("POST /api/submissions", () => {
     });
 
     expect(res.status).toBe(400);
-    expect(fakeGl.submitMemeOnChain).not.toHaveBeenCalled();
     const count = await fakePrisma.submission.count({});
     expect(count).toBe(0);
   });
@@ -118,22 +116,48 @@ describe("POST /api/submissions", () => {
     });
 
     expect(res.status).toBe(400);
-    expect(fakeGl.submitMemeOnChain).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/submissions/:id/onchain-confirm", () => {
+  async function seedPendingSubmission() {
+    await fakePrisma.user.create({
+      data: { id: "u1", authAddress: "0x1", walletAddress: "0x1" },
+    });
+    await fakePrisma.submission.create({
+      data: {
+        id: "s1",
+        competitionId: "week-1",
+        userId: "u1",
+        title: "meme",
+        imageUrl: "https://example.com/a.png",
+        status: "pending",
+      },
+    });
+  }
+
+  it("flips to onchain once GenLayer confirms the submission exists", async () => {
+    await seedPendingSubmission();
+    fakeGl.readUntilFound.mockResolvedValue({ status: "pending" });
+
+    const res = await request(makeApp())
+      .post("/api/submissions/s1/onchain-confirm")
+      .send({ txHash: "0xabc" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.submission.status).toBe("onchain");
   });
 
-  it("keeps the row pending (for retry) rather than failing the request when the on-chain write errors", async () => {
-    await seedOpenCompetition();
-    fakeGl.submitMemeOnChain.mockRejectedValue(new Error("RPC down"));
+  it("refuses to confirm when GenLayer doesn't have the submission yet", async () => {
+    await seedPendingSubmission();
+    fakeGl.readUntilFound.mockResolvedValue(null);
 
-    const res = await request(makeApp()).post("/api/submissions").send({
-      competitionId: "week-1",
-      title: "meme",
-      imageUrl: "https://example.com/a.png",
-    });
+    const res = await request(makeApp())
+      .post("/api/submissions/s1/onchain-confirm")
+      .send({ txHash: "0xabc" });
 
-    expect(res.status).toBe(201);
-    expect(res.body.submission.status).toBe("pending");
-    const sub = await fakePrisma.submission.findFirst({});
+    expect(res.status).toBe(409);
+    const sub = await fakePrisma.submission.findUnique({ where: { id: "s1" } });
     expect(sub!.status).toBe("pending");
   });
 });

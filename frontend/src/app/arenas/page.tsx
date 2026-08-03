@@ -16,8 +16,8 @@ type Comp = {
   startsAt: string;
   endsAt: string;
   submissionCount: number;
-  prizeAtto?: string;
-  winners: Array<{ author: string; rank: number; reward_atto: string }>;
+  prizeUsdcBaseUnits?: string;
+  winners: Array<{ author: string; rank: number; reward_usdc: string }>;
 };
 
 const FILTERS = [
@@ -27,10 +27,10 @@ const FILTERS = [
   { key: "all", label: "All" },
 ] as const;
 
-function genAmount(atto?: string): string {
-  if (!atto) return "0";
-  const gen = Number(BigInt(atto) / BigInt(10 ** 14)) / 10000;
-  return gen.toLocaleString(undefined, { maximumFractionDigits: 2 });
+function usdcAmount(baseUnits?: string): string {
+  if (!baseUnits) return "0";
+  const usdc = Number(BigInt(baseUnits)) / 1e6;
+  return usdc.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
 function timeLeft(endsAt: string, status: string): string {
@@ -153,7 +153,7 @@ export default function Arenas() {
                 <p className="text-on-variant text-sm mb-6 line-clamp-2">{c.theme}</p>
                 <div className="receipt-divider pt-4 flex justify-between items-center font-mono text-xs">
                   <span className="text-on-variant">{c.submissionCount} entries</span>
-                  <span className="text-gold-dim">{genAmount(c.prizeAtto)} GEN</span>
+                  <span className="text-gold-dim">{usdcAmount(c.prizeUsdcBaseUnits)} USDC</span>
                 </div>
               </GlassCard>
             </Link>

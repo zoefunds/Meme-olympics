@@ -2,8 +2,17 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { api } from "@/lib/api";
-import { GlassCard, MonoLabel, StatusChip, PrestigeButton, GhostButton } from "@/components/ui";
+import { api, getUser } from "@/lib/api";
+import { connectWallet, sendEscrowTxSequence, EscrowTxStep } from "@/lib/baseSepolia";
+import { genlayerWrite } from "@/lib/genlayer";
+import {
+  GlassCard,
+  MonoLabel,
+  StatusChip,
+  PrestigeButton,
+  GhostButton,
+  TerminalField,
+} from "@/components/ui";
 
 /* Arena Detail — the missing page: clicking an arena from the browse list
    used to jump straight to the leaderboard, skipping the actual competition
@@ -17,10 +26,35 @@ type Comp = {
   status: string;
   startsAt: string;
   endsAt: string;
-  prizeAtto: string;
+  prizeAtto: string; // legacy DB column name; stores USDC base units now
   createdByUserId?: string;
   onchainCreated: boolean;
-  winners: Array<{ author: string; rank: number; reward_atto: string; score: number }>;
+  winners: Array<{
+    author: string;
+    rank: number;
+    reward_usdc: string;
+    score: number;
+    submission_id: string;
+    title: string;
+    imageUrl: string;
+    caption: string;
+    criteria: Record<string, number>;
+    plagiarismVerdict: string;
+    evaluationSummary: string;
+    username: string;
+  }>;
+};
+
+const CRITERIA_LABELS: Record<string, string> = {
+  originality: "Originality",
+  humor: "Humor",
+  relevance: "Relevance",
+  timing: "Timing",
+  irony: "Irony",
+  cultural_awareness: "Cultural Awareness",
+  crypto_native_understanding: "Crypto-Native",
+  contextual_intelligence: "Contextual Intel",
+  creativity: "Creativity",
 };
 
 const STATUS_TONE: Record<string, "cyan" | "gold" | "muted"> = {
@@ -39,10 +73,10 @@ const STATUS_COPY: Record<string, string> = {
   cancelled: "Cancelled",
 };
 
-function genAmount(atto?: string): string {
-  if (!atto) return "0";
-  const gen = Number(BigInt(atto) / BigInt(10 ** 14)) / 10000;
-  return gen.toLocaleString(undefined, { maximumFractionDigits: 4 });
+function usdcAmount(baseUnits?: string): string {
+  if (!baseUnits) return "0";
+  const usdc = Number(BigInt(baseUnits)) / 1e6;
+  return usdc.toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
 
 function useCountdown(endsAt?: string, active?: boolean) {
@@ -69,22 +103,64 @@ export default function ArenaDetail() {
   const [comp, setComp] = useState<Comp | null>(null);
   const [subCount, setSubCount] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const [fundAmount, setFundAmount] = useState("");
+  const [fundBusy, setFundBusy] = useState(false);
+  const [fundStatus, setFundStatus] = useState("");
   const countdown = useCountdown(comp?.endsAt, comp?.status === "open");
+
+  function load() {
+    if (!params?.id) return;
+    api<Comp>(`/api/competitions/${params.id}`)
+      .then(setComp)
+      .catch((e) => setError((e as Error).message));
+    api<{ leaderboard: unknown[] }>(`/api/competitions/${params.id}/leaderboard`)
+      .then((r) => setSubCount(r.leaderboard.length))
+      .catch(() => undefined);
+  }
 
   useEffect(() => {
     if (!params?.id) return;
-    const load = () => {
-      api<Comp>(`/api/competitions/${params.id}`)
-        .then(setComp)
-        .catch((e) => setError((e as Error).message));
-      api<{ leaderboard: unknown[] }>(`/api/competitions/${params.id}/leaderboard`)
-        .then((r) => setSubCount(r.leaderboard.length))
-        .catch(() => undefined);
-    };
     load();
     const id = setInterval(load, 20000);
     return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params?.id]);
+
+  async function fundArena(e: React.FormEvent) {
+    e.preventDefault();
+    if (!comp) return;
+    const amountUsdc = Number(fundAmount);
+    if (!(amountUsdc > 0)) return;
+    setFundBusy(true);
+    setFundStatus("");
+    try {
+      setFundStatus("Connecting wallet…");
+      const address = await connectWallet({ switchChain: false });
+
+      setFundStatus("Confirm FUND ARENA in your wallet (GenLayer)…");
+      const addedUsdcUnits = Math.round(amountUsdc * 1e6);
+      await genlayerWrite(address, "fund_competition", [comp.id, addedUsdcUnits]);
+
+      setFundStatus("Confirming with the server…");
+      await api(`/api/competitions/${comp.id}/fund-confirm`, { method: "POST" });
+
+      setFundStatus("Fetching deposit transactions…");
+      const { steps } = await api<{ steps: EscrowTxStep[] }>(
+        `/api/competitions/${comp.id}/escrow-fund-calldata?amountUsdc=${amountUsdc}`
+      );
+      setFundStatus("Confirm the approve + deposit transactions in your wallet (Base Sepolia)…");
+      await connectWallet(); // ensures Base Sepolia is the active chain
+      await sendEscrowTxSequence(steps);
+
+      setFundStatus(`✓ Added ${amountUsdc} USDC to the prize pool.`);
+      setFundAmount("");
+      load();
+    } catch (err) {
+      setFundStatus((err as Error).message);
+    } finally {
+      setFundBusy(false);
+    }
+  }
 
   if (error) {
     return (
@@ -123,8 +199,8 @@ export default function ArenaDetail() {
           </div>
           <div className="flex flex-col gap-4 md:items-end">
             <div className="text-right">
-              <MonoLabel>Prize Pool (real GEN)</MonoLabel>
-              <p className="font-display font-bold text-gold text-3xl">{genAmount(comp.prizeAtto)} GEN</p>
+              <MonoLabel>Prize Pool (USDC, Base Sepolia)</MonoLabel>
+              <p className="font-display font-bold text-gold text-3xl">{usdcAmount(comp.prizeAtto)} USDC</p>
             </div>
             {comp.status === "open" && countdown && (
               <div className="text-right">
@@ -147,6 +223,34 @@ export default function ArenaDetail() {
         </div>
       </GlassCard>
 
+      {getUser() && ["open", "judging"].includes(comp.status) && (
+        <GlassCard className="p-6">
+          <MonoLabel className="block mb-3">Add to the prize pool</MonoLabel>
+          <p className="text-on-variant text-xs mb-4">
+            Anyone can top up this arena&apos;s USDC prize pool — the host,
+            a sponsor, or the community. You&apos;ll be asked to confirm on
+            GenLayer, then approve + deposit the USDC on Base Sepolia.
+          </p>
+          <form onSubmit={fundArena} className="flex items-end gap-3">
+            <div className="flex-1 max-w-xs">
+              <TerminalField
+                label="Amount (USDC)"
+                type="number"
+                value={fundAmount}
+                onChange={(e) => setFundAmount(e.target.value)}
+                placeholder="5"
+              />
+            </div>
+            <PrestigeButton type="submit" disabled={fundBusy || !fundAmount}>
+              {fundBusy ? "FUNDING…" : "FUND ARENA"}
+            </PrestigeButton>
+          </form>
+          {fundStatus && (
+            <p className="font-mono text-xs text-cyan-soft mt-3">{fundStatus}</p>
+          )}
+        </GlassCard>
+      )}
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
           ["Entries Judged", subCount ?? "—"],
@@ -164,14 +268,68 @@ export default function ArenaDetail() {
       {comp.winners.length > 0 && (
         <section>
           <h2 className="font-display font-semibold text-2xl mb-4 uppercase">Winners</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {comp.winners.map((w) => (
-              <GlassCard key={w.rank} className="p-5 border-gold-dim/30">
-                <MonoLabel>Rank #{w.rank}</MonoLabel>
-                <p className="font-mono text-xs text-cyan-soft break-all mt-1">{w.author}</p>
-                <div className="receipt-divider mt-3 pt-3 flex justify-between font-mono text-xs">
-                  <span className="text-on-variant">Score {w.score}/100</span>
-                  <span className="text-gold-dim">{genAmount(w.reward_atto)} GEN</span>
+              <GlassCard key={w.rank} className="border-gold-dim/30 overflow-hidden">
+                {w.imageUrl && (
+                  <Link href={`/meme/${w.submission_id}`} className="block h-56 overflow-hidden">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={w.imageUrl}
+                      alt={w.title}
+                      className="w-full h-full object-cover hover:scale-105 transition-transform"
+                    />
+                  </Link>
+                )}
+                <div className="p-5">
+                  <div className="flex justify-between items-start gap-3">
+                    <div>
+                      <MonoLabel>Rank #{w.rank}</MonoLabel>
+                      <p className="font-display font-semibold text-lg mt-1">
+                        {w.title || "Untitled"}
+                      </p>
+                      <p className="font-mono text-xs text-cyan-soft mt-1">
+                        by @{w.username}
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="font-display font-bold text-gold text-xl">
+                        {usdcAmount(w.reward_usdc)}
+                        <span className="text-xs text-on-variant ml-1">USDC</span>
+                      </p>
+                      <p className="font-mono text-xs text-on-variant mt-1">
+                        {w.score}/100
+                      </p>
+                    </div>
+                  </div>
+
+                  {w.evaluationSummary && (
+                    <p className="text-on-variant text-sm mt-4 leading-relaxed">
+                      &ldquo;{w.evaluationSummary}&rdquo;
+                    </p>
+                  )}
+
+                  {Object.keys(w.criteria || {}).length > 0 && (
+                    <div className="grid grid-cols-3 gap-2 mt-4 receipt-divider pt-4">
+                      {Object.entries(w.criteria).map(([key, val]) => (
+                        <div key={key} className="font-mono text-[10px]">
+                          <span className="text-on-variant block truncate">
+                            {CRITERIA_LABELS[key] || key}
+                          </span>
+                          <span className="text-cyan-soft">{val}/10</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="receipt-divider mt-4 pt-3 flex justify-between font-mono text-xs">
+                    <span className="text-on-variant">
+                      Plagiarism: {w.plagiarismVerdict || "—"}
+                    </span>
+                    <Link href={`/meme/${w.submission_id}`} className="text-gold-soft underline">
+                      Full report →
+                    </Link>
+                  </div>
                 </div>
               </GlassCard>
             ))}

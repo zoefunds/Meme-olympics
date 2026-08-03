@@ -16,9 +16,9 @@
 import cron from "node-cron";
 import { prisma } from "../lib/prisma";
 import * as gl from "../services/genlayer";
+import * as escrow from "../services/baseSepolia";
 import { logger } from "../lib/logger";
-import { sendEvaluationEmail, sendWinnerEmail } from "../services/email";
-import { decryptPrivateKey } from "../lib/walletCrypto";
+import { withLock } from "../lib/redis";
 
 function isoWeekId(date = new Date()): string {
   const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
@@ -131,97 +131,13 @@ export async function retryOnchainCreationSweep() {
   return { retried };
 }
 
-/**
- * Retry the initial on-chain registration for submissions whose
- * submitMemeOnChain call failed at submit time (status still 'pending',
- * no tx hash). Without this, such a row was only ever discovered once its
- * competition closed and judging tried to read it — by then it's too late
- * to register, and it silently times out as 'failed' after 30 minutes with
- * zero retry attempts in between. This sweep gives it real chances to
- * land before that timeout is reached.
- */
-export async function retrySubmissionRegistrationSweep() {
-  if (!gl.isChainConfigured()) return { retried: [] as string[] };
-  const stuck = await prisma.submission.findMany({
-    where: {
-      status: "pending",
-      onchainTxHash: "",
-      createdAt: { gte: new Date(Date.now() - 30 * 60 * 1000) },
-      competition: { status: { in: ["open", "judging"] } },
-    },
-    include: { user: true },
-    take: 10,
-  });
-  const retried: string[] = [];
-  for (const sub of stuck) {
-    try {
-      const txHash = await gl.submitMemeOnChain(
-        decryptPrivateKey(sub.user.encryptedPrivateKey),
-        sub.competitionId,
-        sub.id,
-        sub.title,
-        sub.caption,
-        sub.imageUrl,
-        sub.contextUrl,
-        sub.tagsJson,
-        sub.createdAt.toISOString()
-      );
-      await prisma.submission.update({
-        where: { id: sub.id },
-        data: { status: "onchain", onchainTxHash: txHash },
-      });
-      retried.push(sub.id);
-      logger.info({ sub: sub.id }, "submission registration retry succeeded");
-    } catch (err) {
-      logger.warn(
-        { sub: sub.id, err: (err as Error).message },
-        "submission registration retry failed; will retry next tick"
-      );
-    }
-  }
-  return { retried };
-}
-
-/**
- * Retry the initial on-chain open_dispute call for disputes whose
- * registration failed at creation time (onchainOpened=false) — same
- * reasoning as submission registration: without an active retry, a
- * transient failure here leaves a dispute permanently unresolvable
- * on-chain with no visible sign anything is wrong.
- */
-export async function retryDisputeRegistrationSweep() {
-  if (!gl.isChainConfigured()) return { retried: [] as string[] };
-  const stuck = await prisma.dispute.findMany({
-    where: { status: "open", onchainOpened: false },
-    include: { user: true },
-    take: 10,
-  });
-  const retried: string[] = [];
-  for (const dispute of stuck) {
-    try {
-      await gl.openDisputeOnChain(
-        decryptPrivateKey(dispute.user.encryptedPrivateKey),
-        dispute.id,
-        dispute.submissionId,
-        dispute.reason,
-        dispute.evidenceUrl,
-        dispute.createdAt.toISOString()
-      );
-      await prisma.dispute.update({
-        where: { id: dispute.id },
-        data: { onchainOpened: true },
-      });
-      retried.push(dispute.id);
-      logger.info({ dispute: dispute.id }, "dispute registration retry succeeded");
-    } catch (err) {
-      logger.warn(
-        { dispute: dispute.id, err: (err as Error).message },
-        "dispute registration retry failed; will retry next tick"
-      );
-    }
-  }
-  return { retried };
-}
+// NOTE: submission and dispute on-chain registration are signed by the
+// user's own connected wallet from the frontend now (lib/genlayer.ts) —
+// this backend holds no user private keys, so it can no longer retry those
+// writes server-side the way it retries operator-signed ones above. A
+// submission/dispute that never got its frontend-signed tx confirmed just
+// stays 'pending'/onchainOpened=false; the user can resubmit that action
+// from the UI.
 
 /**
  * Close any 'open' competition whose deadline has passed. This is now the
@@ -446,14 +362,6 @@ export async function runJudgingSweep() {
         },
       });
       evaluated++;
-      sendEvaluationEmail(
-        sub.userId,
-        sub.user.email,
-        sub.title,
-        Number(onchain.total_score || 0),
-        String(onchain.plagiarism_verdict || ""),
-        String(onchain.evaluation_summary || "")
-      ).catch(() => undefined);
     } catch (err) {
       const msg = (err as Error).message || "";
       // A row that never landed on-chain can't ever be judged — after 30
@@ -526,8 +434,10 @@ export async function runFinalization() {
         status: string;
         winners: Array<{
           submission_id: string;
+          author: string;
           rank: number;
-          reward_atto: string;
+          score: number;
+          reward_usdc: string;
         }>;
       }>(
         "get_competition",
@@ -551,17 +461,18 @@ export async function runFinalization() {
         },
       });
       for (const w of winners) {
-        const sub = await prisma.submission.update({
+        await prisma.submission.update({
           where: { id: w.submission_id },
           data: { status: "winner" },
-          include: { user: true },
         });
-        const points = (BigInt(w.reward_atto) / BigInt(10 ** 18)).toString();
-        sendWinnerEmail(sub.userId, sub.user.email, sub.title, w.rank, points).catch(
-          () => undefined
-        );
       }
       finalized.push(comp.id);
+      await relayPrizesToEscrow(comp.id, winners).catch((err) =>
+        logger.warn(
+          { comp: comp.id, err: (err as Error).message },
+          "prize relay to Base Sepolia failed; runPrizeRelaySweep will retry"
+        )
+      );
     } catch (err) {
       if (isMissingOnchainCompetition(err)) {
         await markCompetitionDetachedFromChain(comp.id);
@@ -576,8 +487,95 @@ export async function runFinalization() {
   return { finalized };
 }
 
+/**
+ * Push one finalized competition's winners onto the Base Sepolia escrow
+ * (real, claimable USDC) and record the relay on GenLayer so it's never
+ * attempted twice. A no-op if the escrow isn't configured yet, if there's
+ * nothing to pay out, or if GenLayer already has a relay_tx_hash recorded
+ * for this competition (idempotency check before the possibly-costly
+ * on-chain call).
+ */
+async function relayPrizesToEscrow(
+  competitionId: string,
+  winners: Array<{
+    submission_id: string;
+    author: string;
+    rank: number;
+    score: number;
+    reward_usdc: string;
+  }>
+): Promise<void> {
+  if (!escrow.isEscrowConfigured()) return;
+  const hasReward = winners.some((w) => BigInt(w.reward_usdc || "0") > BigInt(0));
+  if (!hasReward) return;
+
+  const onchainComp = (await gl.getOnchainCompetition(competitionId)) as {
+    relay_tx_hash?: string;
+  };
+  if (onchainComp.relay_tx_hash) {
+    // Already relayed on GenLayer — just make sure our own mirror agrees
+    // (e.g. after a restart between the on-chain mark and this DB write).
+    await prisma.competition
+      .update({ where: { id: competitionId }, data: { relayTxHash: onchainComp.relay_tx_hash } })
+      .catch(() => undefined);
+    return;
+  }
+
+  // `winners[].author` is now the winner's actual connected wallet — every
+  // GenLayer write is signed directly by that wallet (see
+  // frontend/src/lib/genlayer.ts), so no address translation is needed
+  // before crediting the escrow.
+  const txHash = await escrow.relayWinnersToEscrow(competitionId, winners);
+  await gl.markPrizesRelayedOnChain(competitionId, txHash);
+  await prisma.competition.update({ where: { id: competitionId }, data: { relayTxHash: txHash } });
+  logger.info({ comp: competitionId, txHash }, "prizes relayed to Base Sepolia escrow");
+}
+
+/**
+ * Retry relay for any finalized competition GenLayer doesn't yet show a
+ * relay_tx_hash for. Catches the case where relayPrizesToEscrow's inline
+ * attempt (right after finalize) failed transiently — e.g. Base Sepolia RPC
+ * hiccup — without blocking finalization itself on that failure.
+ */
+export async function runPrizeRelaySweep() {
+  if (!gl.isChainConfigured() || !escrow.isEscrowConfigured()) {
+    return { relayed: [] as string[] };
+  }
+  const candidates = await prisma.competition.findMany({
+    where: { status: "finalized", onchainFinalized: true },
+    orderBy: { createdAt: "desc" },
+    take: 20,
+  });
+  const relayed: string[] = [];
+  for (const comp of candidates) {
+    try {
+      const winners = JSON.parse(comp.winnersJson || "[]") as Array<{
+        submission_id: string;
+        author: string;
+        rank: number;
+        score: number;
+        reward_usdc: string;
+      }>;
+      if (winners.length === 0) continue;
+      const onchainComp = (await gl.getOnchainCompetition(comp.id)) as {
+        relay_tx_hash?: string;
+      };
+      if (onchainComp.relay_tx_hash) continue; // already relayed
+      await relayPrizesToEscrow(comp.id, winners);
+      relayed.push(comp.id);
+    } catch (err) {
+      logger.warn(
+        { comp: comp.id, err: (err as Error).message },
+        "prize relay retry failed; will retry next sweep"
+      );
+    }
+  }
+  return { relayed };
+}
+
 let closeRunning = false;
 let judgeRunning = false;
+let relayRunning = false;
 
 /**
  * Deadline close on its own guard, separate from judging/finalization.
@@ -587,11 +585,18 @@ let judgeRunning = false;
  * an arena whose deadline has passed could keep accepting submissions for
  * as long as an unrelated arena's judging sweep was still in flight.
  */
+// Cross-machine locks: this app intentionally runs multiple Fly machines
+// for 24/7 uptime, and each one fires the exact same cron schedule
+// independently — without a lock, every tick runs once PER MACHINE
+// (double close/evaluate/finalize/relay calls). See lib/redis.ts's
+// withLock docs. `closeRunning`/`judgeRunning`/`relayRunning` remain as a
+// same-process fast-path so a machine doesn't even attempt Redis when it's
+// already mid-tick itself.
 async function runCloseTick() {
   if (closeRunning) return;
   closeRunning = true;
   try {
-    await runDeadlineClose();
+    await withLock("close-tick", 55_000, runDeadlineClose);
   } catch (err) {
     logger.error({ err: (err as Error).message }, "deadline close tick failed");
   } finally {
@@ -602,14 +607,19 @@ async function runCloseTick() {
 /**
  * Judging + finalization on their own guard — kept single-flight so only
  * one competition's submissions are ever being judged at a time (strict
- * sequential judging), independent of how often closes are ticking.
+ * sequential judging), independent of how often closes are ticking. The
+ * lock TTL is long (and renewed while running) because a single tick can
+ * legitimately take minutes: each submission's evaluate call waits for
+ * on-chain FINALIZED before the next one is even broadcast.
  */
 async function runJudgeTick() {
   if (judgeRunning) return;
   judgeRunning = true;
   try {
-    await runJudgingSweep();
-    await runFinalization();
+    await withLock("judge-tick", 10 * 60_000, async () => {
+      await runJudgingSweep();
+      await runFinalization();
+    });
   } catch (err) {
     logger.error({ err: (err as Error).message }, "judging tick failed");
   } finally {
@@ -617,14 +627,39 @@ async function runJudgeTick() {
   }
 }
 
+/**
+ * Prize relay on its own guard, separate from judging/finalization — a slow
+ * or stuck Base Sepolia RPC must never hold up judging or closing arenas.
+ */
+async function runRelayTick() {
+  if (relayRunning) return;
+  relayRunning = true;
+  try {
+    await withLock("relay-tick", 2 * 60_000, runPrizeRelaySweep);
+  } catch (err) {
+    logger.error({ err: (err as Error).message }, "prize relay tick failed");
+  } finally {
+    relayRunning = false;
+  }
+}
+
 export function startSchedulers() {
-  // Weekly rollover — Mondays 00:05 UTC (opens the new official arena only)
-  cron.schedule("5 0 * * 1", () => void runWeeklyRollover(), { timezone: "UTC" });
+  // Weekly rollover — Mondays 00:05 UTC (opens the new official arena only).
+  // Locked too: without it, every machine would try to create the same
+  // week's arena at once.
+  cron.schedule("5 0 * * 1", () => void withLock("weekly-rollover", 5 * 60_000, runWeeklyRollover), {
+    timezone: "UTC",
+  });
   // Close sweep — every minute, always runs: flips any expired 'open'
   // competition to 'judging' immediately, regardless of judging load.
   cron.schedule("* * * * *", () => void runCloseTick(), { timezone: "UTC" });
   // Judging sweep — every minute, single-flight: judges/finalizes whatever
   // is already closed, one competition's submissions at a time.
   cron.schedule("* * * * *", () => void runJudgeTick(), { timezone: "UTC" });
-  logger.info("schedulers started (weekly rollover, per-minute close + judge sweeps)");
+  // Prize relay sweep — every 2 minutes: catches any finalized competition
+  // whose Base Sepolia relay didn't land inline at finalize time.
+  cron.schedule("*/2 * * * *", () => void runRelayTick(), { timezone: "UTC" });
+  logger.info(
+    "schedulers started (weekly rollover, per-minute close + judge sweeps, prize relay sweep)"
+  );
 }

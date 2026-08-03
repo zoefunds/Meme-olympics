@@ -9,35 +9,18 @@ datasource db {
 
 model User {
   id                  String       @id @default(cuid())
-  email               String       @unique
-  username            String       @unique
-  passwordHash        String
-  // Custodial GenLayer/EVM wallet — permanently linked, survives devices.
-  walletAddress       String       @unique
-  // AES-256-GCM ciphertext (iv:tag:data, hex) under WALLET_ENCRYPTION_KEY.
-  encryptedPrivateKey String
+  // The user's connected wallet (MetaMask etc.) — sole identity, and the
+  // sole signer for everything: login (SIWE), GenLayer writes (see
+  // frontend/src/lib/genlayer.ts — genlayer-js signs via the injected
+  // provider when given just an address), and Base Sepolia. No email, no
+  // password, no separate custodial key anywhere in this app.
+  authAddress         String       @unique
+  username            String?      @unique
   role                String       @default("user") // user | admin
-  emailVerified       Boolean      @default(false)
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
   submissions         Submission[]
   disputes            Dispute[]
-  resetTokens         PasswordResetToken[]
-  notifications       NotificationLog[]
-
-  @@index([email])
-}
-
-model PasswordResetToken {
-  id        String   @id @default(cuid())
-  userId    String
-  tokenHash String   @unique
-  expiresAt DateTime
-  usedAt    DateTime?
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
 }
 
 model Competition {
@@ -51,7 +34,12 @@ model Competition {
   onchainFinalized Boolean     @default(false)
   winnersJson     String       @default("[]")
   createdByUserId String?
-  prizeAtto       String       @default("0") // real escrowed GEN, atto-scale (mirrors on-chain prize_pool_atto)
+  prizeAtto       String       @default("0") // declared USDC, 6-decimal base units (mirrors on-chain prize_pool_usdc; column name kept from the legacy GEN-atto design)
+  // Base Sepolia tx hash once winners were pushed to the escrow contract —
+  // "" means still pending relay. Mirrors GenLayer's own relay_tx_hash so
+  // rewards.ts can tell "not yet relayed" apart from "relayed and fully
+  // claimed" without an extra on-chain read per request.
+  relayTxHash     String       @default("")
   createdAt       DateTime     @default(now())
   submissions     Submission[]
 
@@ -99,18 +87,6 @@ model Dispute {
   user         User       @relation(fields: [userId], references: [id])
 
   @@index([submissionId])
-}
-
-model NotificationLog {
-  id        String   @id @default(cuid())
-  userId    String
-  type      String
-  subject   String
-  status    String   @default("sent")
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
 }
 
 model Image {

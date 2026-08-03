@@ -20,14 +20,18 @@ export function clearSession() {
 
 export function getUser(): {
   id: string;
-  email: string;
-  username: string;
-  walletAddress: string;
+  authAddress: string;
+  username: string | null;
   role: string;
 } | null {
   if (typeof window === "undefined") return null;
   const raw = localStorage.getItem("mo_user");
   return raw ? JSON.parse(raw) : null;
+}
+
+/** Short "0x1234…abcd" form for display when there's no username. */
+export function shortAddress(address: string): string {
+  return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
 export async function api<T = any>(

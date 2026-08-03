@@ -31,6 +31,9 @@ vi.mock("../services/genlayer", () => ({
   get readContract() {
     return fakeGl.readContract;
   },
+  get readUntilFound() {
+    return fakeGl.readUntilFound;
+  },
 }));
 vi.mock("../lib/logger", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -113,7 +116,7 @@ describe("POST /api/admin/resolve-dispute/:id", () => {
         status: "open",
       },
     });
-    fakeGl.__setImpl("readContract", () => ({ status: "upheld", verdict_summary: "valid claim" }));
+    fakeGl.readUntilFound.mockResolvedValue({ status: "upheld", verdict_summary: "valid claim" });
 
     const res = await request(makeApp()).post("/api/admin/resolve-dispute/d1").send({});
 

@@ -121,10 +121,13 @@ adminRouter.post("/resolve-dispute/:id", async (req, res: Response) => {
     return res.status(503).json({ error: "Contract not configured" });
   }
   await gl.resolveDisputeOnChain(req.params.id, new Date().toISOString());
-  const onchain = (await gl.readContract("get_dispute", [req.params.id])) as {
-    status?: string;
-    verdict_summary?: string;
-  };
+  // Same read-after-write lag every other onchain-confirm route guards
+  // against — a read immediately after this write can still miss.
+  const onchain = await gl.readUntilFound<{ status?: string; verdict_summary?: string }>(
+    "get_dispute",
+    [req.params.id],
+    (v) => Boolean(v?.status)
+  );
   const dispute = await prisma.dispute.update({
     where: { id: req.params.id },
     data: {

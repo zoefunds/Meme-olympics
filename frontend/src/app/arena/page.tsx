@@ -14,13 +14,13 @@ type Comp = {
   theme?: string;
   endsAt?: string;
   submissionCount?: number;
-  prizeAtto?: string;
+  prizeUsdcBaseUnits?: string;
 };
 
-function genAmount(atto?: string): string {
-  if (!atto) return "0";
-  const gen = Number(BigInt(atto) / BigInt(10 ** 14)) / 10000;
-  return gen.toLocaleString(undefined, { maximumFractionDigits: 4 });
+function usdcAmount(baseUnits?: string): string {
+  if (!baseUnits) return "0";
+  const usdc = Number(BigInt(baseUnits)) / 1e6;
+  return usdc.toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
 type Entry = {
   rank: number;
@@ -99,9 +99,9 @@ export default function Arena() {
             </p>
             <div className="flex flex-wrap gap-6 items-center">
               <div className="flex flex-col">
-                <MonoLabel>Prize Pool (real GEN)</MonoLabel>
+                <MonoLabel>Prize Pool (USDC, Base Sepolia)</MonoLabel>
                 <p className="font-display font-bold text-gold text-4xl">
-                  {genAmount(comp?.prizeAtto)} <span className="text-xl text-on-variant">GEN</span>
+                  {usdcAmount(comp?.prizeUsdcBaseUnits)} <span className="text-xl text-on-variant">USDC</span>
                 </p>
               </div>
               <Link

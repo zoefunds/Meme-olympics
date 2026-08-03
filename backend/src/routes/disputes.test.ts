@@ -16,15 +16,15 @@ vi.mock("../services/genlayer", () => ({
   get isChainConfigured() {
     return fakeGl.isChainConfigured;
   },
-  get openDisputeOnChain() {
-    return fakeGl.openDisputeOnChain;
+  get readContract() {
+    return fakeGl.readContract;
+  },
+  get readUntilFound() {
+    return fakeGl.readUntilFound;
   },
 }));
 vi.mock("../lib/logger", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
-}));
-vi.mock("../lib/walletCrypto", () => ({
-  decryptPrivateKey: () => "fake-private-key",
 }));
 vi.mock("../lib/redis", () => ({
   rateLimit: () => Promise.resolve(true),
@@ -51,7 +51,7 @@ beforeEach(async () => {
   fakePrisma = createFakePrisma();
   fakeGl = createFakeGenlayer();
   await fakePrisma.user.create({
-    data: { id: "u1", email: "a@a.com", encryptedPrivateKey: "k", walletAddress: "0x1" },
+    data: { id: "u1", authAddress: "0x1", walletAddress: "0x1" },
   });
   await fakePrisma.submission.create({
     data: {
@@ -69,21 +69,7 @@ afterEach(() => {
 });
 
 describe("POST /api/disputes", () => {
-  it("marks the dispute onchainOpened once the on-chain open_dispute call is confirmed", async () => {
-    const res = await request(makeApp()).post("/api/disputes").send({
-      submissionId: "s1",
-      reason: "Score seems wrong for this entry",
-      evidenceUrl: "https://example.com/evidence",
-    });
-
-    expect(res.status).toBe(201);
-    const dispute = await fakePrisma.dispute.findUnique({ where: { id: res.body.dispute.id } });
-    expect(dispute!.onchainOpened).toBe(true);
-  });
-
-  it("leaves onchainOpened false (so the retry sweep picks it up) when the chain call fails, instead of silently dropping it", async () => {
-    fakeGl.openDisputeOnChain.mockRejectedValue(new Error("RPC down"));
-
+  it("registers the dispute row — the on-chain open_dispute call is signed by the user's own wallet from the frontend", async () => {
     const res = await request(makeApp()).post("/api/disputes").send({
       submissionId: "s1",
       reason: "Score seems wrong for this entry",
@@ -105,5 +91,23 @@ describe("POST /api/disputes", () => {
     });
 
     expect(res.status).toBe(400);
+  });
+});
+
+describe("POST /api/disputes/:id/onchain-confirm", () => {
+  it("marks onchainOpened once GenLayer confirms the dispute exists", async () => {
+    const created = await request(makeApp()).post("/api/disputes").send({
+      submissionId: "s1",
+      reason: "Score seems wrong for this entry",
+      evidenceUrl: "https://example.com/evidence",
+    });
+    const id = created.body.dispute.id;
+    fakeGl.readUntilFound.mockResolvedValue({ status: "open" });
+
+    const res = await request(makeApp()).post(`/api/disputes/${id}/onchain-confirm`);
+
+    expect(res.status).toBe(200);
+    const dispute = await fakePrisma.dispute.findUnique({ where: { id } });
+    expect(dispute!.onchainOpened).toBe(true);
   });
 });

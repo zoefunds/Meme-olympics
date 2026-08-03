@@ -1,22 +1,28 @@
 import { Router, Response } from "express";
 import { z } from "zod";
+import { ethers } from "ethers";
 import { prisma } from "../lib/prisma";
 import { cacheGet, cacheSet } from "../lib/redis";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { limit } from "../middleware/rateLimit";
-import { decryptPrivateKey } from "../lib/walletCrypto";
 import * as gl from "../services/genlayer";
-import { logger } from "../lib/logger";
+import * as escrow from "../services/baseSepolia";
 import { scheduleClose } from "../jobs/weekly";
+import { config } from "../lib/config";
+import { MEME_OLYMPICS_ESCROW_ABI, ERC20_ABI } from "../lib/escrowAbi";
 
 export const competitionsRouter = Router();
 
-const ATTO = BigInt(10) ** BigInt(18);
+// USDC has 6 decimals. NOTE: the `prizeAtto` DB column name is legacy (kept
+// to avoid a migration) but stores USDC base units now, not 18-decimal GEN.
+const USDC_UNIT = BigInt(10) ** BigInt(6);
 
 // POST /api/competitions — OPEN TO ALL signed-in users: anyone can host an
-// arena, signed and funded by their OWN wallet. `prizeGen` (optional, may be
-// 0 for a prestige-only arena) is sent as real GEN value with the creation
-// transaction and becomes the competition's escrowed, on-chain prize pool.
+// arena. GenLayer itself never escrows value — `prizeUsdc` (optional, may
+// be 0 for a prestige-only arena) is only the DECLARED prize amount
+// recorded on-chain for display/ranking. The host still needs to actually
+// deposit that USDC on the Base Sepolia escrow contract (see
+// GET /:id/escrow-fund-calldata) for it to be real, claimable money.
 competitionsRouter.post(
   "/",
   requireAuth,
@@ -26,13 +32,13 @@ competitionsRouter.post(
       title: z.string().min(3).max(120),
       theme: z.string().max(600).default(""),
       endsAt: z.string().refine((s) => !isNaN(Date.parse(s)), "Invalid date"),
-      prizeGen: z.number().min(0).max(1_000_000).default(0),
+      prizeUsdc: z.number().min(0).max(1_000_000).default(0),
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.issues[0].message });
     }
-    const { title, theme, endsAt, prizeGen } = parsed.data;
+    const { title, theme, endsAt, prizeUsdc } = parsed.data;
     if (new Date(endsAt) <= new Date()) {
       return res.status(400).json({ error: "End date must be in the future" });
     }
@@ -48,7 +54,7 @@ competitionsRouter.post(
       id = `arena-${base}-${Date.now().toString(36)}`;
     }
 
-    const prizeAtto = BigInt(Math.round(prizeGen * 1e6)) * (ATTO / BigInt(1e6));
+    const prizeUsdcUnits = BigInt(Math.round(prizeUsdc * 1e6));
 
     const comp = await prisma.competition.create({
       data: {
@@ -59,86 +65,85 @@ competitionsRouter.post(
         startsAt: new Date(),
         endsAt: new Date(endsAt),
         createdByUserId: req.userId!,
-        prizeAtto: prizeAtto.toString(),
+        prizeAtto: prizeUsdcUnits.toString(),
       },
     });
 
-    if (gl.isChainConfigured()) {
-      try {
-        const user = await prisma.user.findUnique({ where: { id: req.userId! } });
-        // Signed and funded by the HOST's own wallet — a genuine value
-        // transfer, not the backend operator paying on their behalf.
-        await gl.createCompetitionAsUser(
-          decryptPrivateKey(user!.encryptedPrivateKey),
-          id,
-          title,
-          theme,
-          comp.startsAt.toISOString(),
-          comp.endsAt.toISOString(),
-          prizeAtto
-        );
-        await gl.openCompetitionOnChain(id);
-        await prisma.competition.update({
-          where: { id },
-          data: { onchainCreated: true },
-        });
-        scheduleClose(id, comp.endsAt);
-      } catch (err) {
-        // The lifecycle is authoritative on-chain: a competition that never
-        // confirmed on-chain must never be user-visible as a real, joinable
-        // "open" arena (it would accept submissions no judging sweep could
-        // ever act on, since judging/finalization both require
-        // onchainCreated=true — an orphan with no path to close/finalize).
-        // Delete rather than leave it dangling; nothing could have
-        // referenced it yet since the client never received its id.
-        await prisma.competition.delete({ where: { id } }).catch(() => undefined);
-        logger.error(
-          { err: (err as Error).message, comp: id },
-          "on-chain competition creation failed; row rolled back"
-        );
-        return res.status(502).json({
-          error:
-            "Could not fund/create this arena on-chain (check your wallet's GEN balance). " +
-            (err as Error).message,
-        });
-      }
-    }
-    return res.status(201).json({ competition: comp });
+    return res.status(201).json({
+      competition: comp,
+      // Frontend signs create_competition + open_competition itself (see
+      // lib/genlayer.ts) — this backend holds no user private keys. Once
+      // those transactions land, call POST /:id/onchain-confirm.
+      genlayer: {
+        functionArgs: [id, title, theme, comp.startsAt.toISOString(), comp.endsAt.toISOString(), Number(prizeUsdcUnits)],
+      },
+      escrow:
+        prizeUsdcUnits > BigInt(0)
+          ? {
+              note: "Deposit the declared USDC on Base Sepolia to back this prize pool — see GET /:id/escrow-fund-calldata.",
+              competitionIdBytes32: escrow.competitionIdToBytes32(id),
+            }
+          : null,
+    });
   }
 );
 
-// POST /api/competitions/:id/fund — anyone can top up an arena's real GEN
-// prize pool with their own wallet, any time before it finalizes.
+// POST /api/competitions/:id/onchain-confirm — called by the frontend once
+// its own wallet-signed create_competition + open_competition transactions
+// land. Verified against GenLayer itself, not just trusted from the client.
 competitionsRouter.post(
-  "/:id/fund",
+  "/:id/onchain-confirm",
+  requireAuth,
+  async (req: AuthedRequest, res: Response) => {
+    const comp = await prisma.competition.findUnique({ where: { id: req.params.id } });
+    if (!comp || comp.createdByUserId !== req.userId) {
+      return res.status(404).json({ error: "Competition not found" });
+    }
+    if (!gl.isChainConfigured()) {
+      return res.status(503).json({ error: "Contract not configured yet" });
+    }
+    // Reads can lag moments behind a just-ACCEPTED write — retry rather
+    // than failing the whole confirm (and skipping the prize deposit step
+    // that follows it client-side) on the first transient miss.
+    const onchain = await gl.readUntilFound<{ status?: string }>(
+      "get_competition",
+      [comp.id],
+      (v) => v?.status === "open"
+    );
+    if (!onchain) {
+      return res.status(409).json({ error: "Competition not found (or not yet 'open') on-chain" });
+    }
+    const updated = await prisma.competition.update({
+      where: { id: comp.id },
+      data: { onchainCreated: true },
+    });
+    scheduleClose(comp.id, comp.endsAt);
+    return res.json({ competition: updated });
+  }
+);
+
+// POST /api/competitions/:id/fund-confirm — called by the frontend once its
+// own wallet-signed fund_competition transaction lands. Syncs our DB's
+// declared prize amount to whatever GenLayer now actually reports, rather
+// than trusting a client-supplied delta.
+competitionsRouter.post(
+  "/:id/fund-confirm",
   requireAuth,
   limit("fund-comp", 10, 3600),
   async (req: AuthedRequest, res: Response) => {
     if (!gl.isChainConfigured()) {
       return res.status(503).json({ error: "Contract not configured yet" });
     }
-    const schema = z.object({ amountGen: z.number().positive().max(1_000_000) });
-    const parsed = schema.safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({ error: parsed.error.issues[0].message });
-    }
     const comp = await prisma.competition.findUnique({ where: { id: req.params.id } });
     if (!comp) return res.status(404).json({ error: "Competition not found" });
-    if (["finalized", "cancelled"].includes(comp.status)) {
-      return res.status(400).json({ error: "This arena can no longer be funded" });
-    }
-    const amountAtto = BigInt(Math.round(parsed.data.amountGen * 1e6)) * (ATTO / BigInt(1e6));
 
     try {
-      const user = await prisma.user.findUnique({ where: { id: req.userId! } });
-      await gl.fundCompetitionOnChain(
-        decryptPrivateKey(user!.encryptedPrivateKey),
-        comp.id,
-        amountAtto
-      );
+      const onchain = (await gl.getOnchainCompetition(comp.id)) as {
+        prize_pool_usdc?: string;
+      };
       const updated = await prisma.competition.update({
         where: { id: comp.id },
-        data: { prizeAtto: (BigInt(comp.prizeAtto) + amountAtto).toString() },
+        data: { prizeAtto: String(onchain?.prize_pool_usdc ?? comp.prizeAtto) },
       });
       return res.json({ competition: updated });
     } catch (err) {
@@ -146,6 +151,48 @@ competitionsRouter.post(
     }
   }
 );
+
+// GET /api/competitions/:id/escrow-fund-calldata?amountUsdc=N — returns the
+// approve() + fundCompetition() calldata the frontend should send via the
+// user's own connected wallet on Base Sepolia (the same wallet used
+// everywhere else in this app).
+competitionsRouter.get("/:id/escrow-fund-calldata", async (req, res) => {
+  if (!config.baseSepolia.escrowAddress) {
+    return res.status(503).json({ error: "Escrow contract not configured yet" });
+  }
+  const amountUsdc = Number(req.query.amountUsdc || 0);
+  if (!(amountUsdc > 0)) {
+    return res.status(400).json({ error: "amountUsdc must be > 0" });
+  }
+  const amountUnits = BigInt(Math.round(amountUsdc * 1e6));
+  const key = escrow.competitionIdToBytes32(req.params.id);
+  const escrowIface = new ethers.Interface(MEME_OLYMPICS_ESCROW_ABI);
+  const erc20Iface = new ethers.Interface(ERC20_ABI);
+  return res.json({
+    chain: "base-sepolia",
+    chainId: 84532,
+    usdcAddress: config.baseSepolia.usdcAddress,
+    escrowAddress: config.baseSepolia.escrowAddress,
+    amountUnits: amountUnits.toString(),
+    steps: [
+      {
+        label: "Approve USDC",
+        to: config.baseSepolia.usdcAddress,
+        data: erc20Iface.encodeFunctionData("approve", [
+          config.baseSepolia.escrowAddress,
+          amountUnits,
+        ]),
+        value: "0x0",
+      },
+      {
+        label: "Deposit into competition pool",
+        to: config.baseSepolia.escrowAddress,
+        data: escrowIface.encodeFunctionData("fundCompetition", [key, amountUnits]),
+        value: "0x0",
+      },
+    ],
+  });
+});
 
 // GET /api/competitions — list (cached 120s)
 competitionsRouter.get("/", async (_req, res) => {
@@ -165,7 +212,7 @@ competitionsRouter.get("/", async (_req, res) => {
       startsAt: c.startsAt,
       endsAt: c.endsAt,
       submissionCount: c._count.submissions,
-      prizeAtto: c.prizeAtto,
+      prizeUsdcBaseUnits: c.prizeAtto,
       winners: JSON.parse(c.winnersJson || "[]"),
     })),
   };
@@ -190,7 +237,7 @@ competitionsRouter.get("/active", async (_req, res) => {
         startsAt: comp.startsAt,
         endsAt: comp.endsAt,
         submissionCount: comp._count.submissions,
-        prizeAtto: comp.prizeAtto,
+        prizeUsdcBaseUnits: comp.prizeAtto,
       }
     : { active: false };
   await cacheSet("comps:active", JSON.stringify(payload), 60_000);
@@ -208,9 +255,43 @@ competitionsRouter.get("/:id", async (req, res) => {
     where: { id: req.params.id },
   });
   if (!comp) return res.status(404).json({ error: "Competition not found" });
+  const winners = JSON.parse(comp.winnersJson || "[]") as Array<{
+    submission_id: string;
+    author: string;
+    rank: number;
+    score: number;
+    reward_usdc: string;
+  }>;
+
+  // Enrich each winner with its actual meme + judging details, so the
+  // arena page can show the image and review instead of just an address.
+  let enrichedWinners: unknown[] = winners;
+  if (winners.length > 0) {
+    const subs = await prisma.submission.findMany({
+      where: { id: { in: winners.map((w) => w.submission_id) } },
+      include: { user: { select: { username: true, authAddress: true } } },
+    });
+    const byId = new Map(subs.map((s) => [s.id, s]));
+    enrichedWinners = winners.map((w) => {
+      const sub = byId.get(w.submission_id);
+      return {
+        ...w,
+        title: sub?.title || "",
+        imageUrl: sub?.imageUrl || "",
+        caption: sub?.caption || "",
+        tags: sub ? JSON.parse(sub.tagsJson || "[]") : [],
+        criteria: sub ? JSON.parse(sub.criteriaJson || "{}") : {},
+        plagiarismVerdict: sub?.plagiarismVerdict || "",
+        evaluationSummary: sub?.evaluationSummary || "",
+        username:
+          sub?.user.username || (sub ? `wallet_${sub.user.authAddress.slice(2, 8)}` : ""),
+      };
+    });
+  }
+
   const payload = {
     ...comp,
-    winners: JSON.parse(comp.winnersJson || "[]"),
+    winners: enrichedWinners,
   };
   await cacheSet(key, JSON.stringify(payload), 15_000);
   return res.json(payload);
@@ -229,7 +310,7 @@ competitionsRouter.get("/:id/leaderboard", async (req, res) => {
     },
     orderBy: [{ totalScore: "desc" }, { id: "asc" }],
     take: 500, // matches the contract's MAX_SUBMISSIONS_PER_COMPETITION
-    include: { user: { select: { username: true, walletAddress: true } } },
+    include: { user: { select: { username: true, authAddress: true } } },
   });
   const payload = {
     leaderboard: subs.map((s, i) => ({
@@ -237,8 +318,8 @@ competitionsRouter.get("/:id/leaderboard", async (req, res) => {
       submissionId: s.id,
       title: s.title,
       imageUrl: s.imageUrl,
-      username: s.user.username,
-      walletAddress: s.user.walletAddress,
+      username: s.user.username || `wallet_${s.user.authAddress.slice(2, 8)}`,
+      walletAddress: s.user.authAddress,
       score: s.totalScore,
       criteria: JSON.parse(s.criteriaJson || "{}"),
       status: s.status,

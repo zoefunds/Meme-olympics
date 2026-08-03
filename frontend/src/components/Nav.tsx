@@ -3,12 +3,13 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Logo } from "./Logo";
-import { getUser, clearSession } from "@/lib/api";
+import { getUser, clearSession, shortAddress } from "@/lib/api";
 
 const links = [
   { href: "/arena", label: "Arena" },
   { href: "/arenas", label: "All Arenas" },
   { href: "/leaderboard", label: "Leaderboard" },
+  { href: "/disputes", label: "Disputes" },
   { href: "/rewards", label: "Rewards" },
   { href: "/docs", label: "Docs" },
 ];
@@ -55,7 +56,7 @@ export function TopNav() {
                 href="/dashboard"
                 className="font-mono text-xs text-cyan-soft hover:text-cyan transition-colors"
               >
-                @{user.username}
+                {user.username ? `@${user.username}` : shortAddress(user.authAddress)}
               </Link>
               {user.role === "admin" && (
                 <Link href="/admin" className="font-mono text-xs text-purple-soft">
@@ -77,20 +78,12 @@ export function TopNav() {
               </button>
             </>
           ) : (
-            <>
-              <Link
-                href="/login"
-                className="text-on-variant hover:text-on-surface font-display text-sm font-semibold"
-              >
-                Sign In
-              </Link>
-              <Link
-                href="/register"
-                className="bg-purple hover:scale-105 active:scale-95 text-white px-6 py-2 rounded-lg font-display text-xs font-semibold uppercase tracking-wider transition-all shadow-[0_0_15px_rgba(119,1,208,0.3)]"
-              >
-                Enter the Arena
-              </Link>
-            </>
+            <Link
+              href="/login"
+              className="bg-purple hover:scale-105 active:scale-95 text-white px-6 py-2 rounded-lg font-display text-xs font-semibold uppercase tracking-wider transition-all shadow-[0_0_15px_rgba(119,1,208,0.3)]"
+            >
+              Connect Wallet
+            </Link>
           )}
         </div>
       </header>

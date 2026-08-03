@@ -3,9 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { limit } from "../middleware/rateLimit";
-import { decryptPrivateKey } from "../lib/walletCrypto";
 import * as gl from "../services/genlayer";
-import { logger } from "../lib/logger";
 
 export const submissionsRouter = Router();
 
@@ -18,7 +16,11 @@ const submitSchema = z.object({
   tags: z.array(z.string().min(1).max(32)).max(8).default([]),
 });
 
-// POST /api/submissions — register meme, then push on-chain with user's wallet
+// POST /api/submissions — registers the meme in our own DB. The actual
+// on-chain submit_meme call is signed and sent by the CALLER'S OWN wallet
+// from the frontend (see lib/genlayer.ts) — this backend never holds a
+// private key for any user, so it can't sign on their behalf. Call
+// POST /:id/onchain-confirm once that transaction lands.
 submissionsRouter.post(
   "/",
   requireAuth,
@@ -69,34 +71,42 @@ submissionsRouter.post(
       },
     });
 
-    // Push on-chain signed by the user's own custodial wallet.
-    if (gl.isChainConfigured()) {
-      try {
-        const user = await prisma.user.findUnique({ where: { id: req.userId! } });
-        const txHash = await gl.submitMemeOnChain(
-          decryptPrivateKey(user!.encryptedPrivateKey),
-          comp.id,
-          sub.id,
-          data.title,
-          data.caption,
-          data.imageUrl,
-          data.contextUrl || "",
-          JSON.stringify(data.tags),
-          new Date().toISOString()
-        );
-        await prisma.submission.update({
-          where: { id: sub.id },
-          data: { status: "onchain", onchainTxHash: txHash },
-        });
-        sub.status = "onchain";
-        sub.onchainTxHash = txHash;
-      } catch (err) {
-        logger.error({ err: (err as Error).message }, "on-chain submit failed");
-        // Keep the row; the judging worker retries pending submissions.
-      }
-    }
-
     return res.status(201).json({ submission: sub });
+  }
+);
+
+// POST /api/submissions/:id/onchain-confirm — called by the frontend once
+// its own wallet-signed submit_meme transaction lands. We don't just trust
+// the client's word for it: read the submission back from GenLayer and
+// only flip status once it's actually there.
+submissionsRouter.post(
+  "/:id/onchain-confirm",
+  requireAuth,
+  async (req: AuthedRequest, res: Response) => {
+    const sub = await prisma.submission.findUnique({ where: { id: req.params.id } });
+    if (!sub || sub.userId !== req.userId) {
+      return res.status(404).json({ error: "Submission not found" });
+    }
+    const schema = z.object({ txHash: z.string().min(4) });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "txHash required" });
+
+    if (!gl.isChainConfigured()) {
+      return res.status(503).json({ error: "Contract not configured yet" });
+    }
+    const onchain = await gl.readUntilFound<{ status?: string }>(
+      "get_submission",
+      [sub.id],
+      (v) => Boolean(v?.status)
+    );
+    if (!onchain) {
+      return res.status(409).json({ error: "Submission not found on-chain yet" });
+    }
+    const updated = await prisma.submission.update({
+      where: { id: sub.id },
+      data: { status: "onchain", onchainTxHash: parsed.data.txHash },
+    });
+    return res.json({ submission: updated });
   }
 );
 

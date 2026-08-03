@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { api, getUser } from "@/lib/api";
+import { api, getUser, shortAddress } from "@/lib/api";
 import { GlassCard, MonoLabel, SegmentedBar, StatusChip } from "@/components/ui";
 
 type Sub = {
@@ -85,11 +85,11 @@ export default function Dashboard() {
       {user && (
         <GlassCard className="p-6 flex flex-col md:flex-row justify-between md:items-center gap-4">
           <div>
-            <MonoLabel>Your GenLayer Wallet (permanently linked)</MonoLabel>
-            <p className="font-mono text-sm text-cyan-soft break-all mt-1">{user.walletAddress}</p>
+            <MonoLabel>Your Connected Wallet</MonoLabel>
+            <p className="font-mono text-sm text-cyan-soft break-all mt-1">{user.authAddress}</p>
           </div>
           <Link href="/settings" className="font-mono text-xs text-on-variant hover:text-white uppercase">
-            Export key →
+            View settings →
           </Link>
         </GlassCard>
       )}

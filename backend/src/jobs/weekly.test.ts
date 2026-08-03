@@ -32,12 +32,6 @@ vi.mock("../services/genlayer", () => ({
   get resolveDisputeOnChain() {
     return fakeGl.resolveDisputeOnChain;
   },
-  get submitMemeOnChain() {
-    return fakeGl.submitMemeOnChain;
-  },
-  get openDisputeOnChain() {
-    return fakeGl.openDisputeOnChain;
-  },
   get getOnchainSubmission() {
     return fakeGl.getOnchainSubmission;
   },
@@ -53,10 +47,6 @@ vi.mock("../services/genlayer", () => ({
 }));
 vi.mock("../lib/logger", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
-}));
-vi.mock("../services/email", () => ({
-  sendEvaluationEmail: vi.fn(() => Promise.resolve()),
-  sendWinnerEmail: vi.fn(() => Promise.resolve()),
 }));
 
 // Imported after mocks are registered so the module under test picks up the fakes.
@@ -278,7 +268,7 @@ describe("runFinalization (payout)", () => {
       fn === "get_competition"
         ? {
             status: "finalized",
-            winners: [{ submission_id: "s1", rank: 1, reward_atto: String(10n ** 18n) }],
+            winners: [{ submission_id: "s1", author: "0xabc", rank: 1, score: 90, reward_usdc: String(10n ** 6n) }],
           }
         : {}
     );

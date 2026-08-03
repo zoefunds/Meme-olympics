@@ -58,17 +58,6 @@ async function getOperatorClient(): Promise<GLClient> {
   return operatorClient;
 }
 
-/** Client bound to a specific user's custodial wallet key. */
-async function getUserClient(privateKey: string): Promise<GLClient> {
-  const sdk = await loadSdk();
-  const account = sdk.createAccount(privateKey);
-  return sdk.createClient({
-    chain: chainDef,
-    endpoint: config.genlayer.rpcUrl,
-    account,
-  });
-}
-
 export function isChainConfigured(): boolean {
   return Boolean(
     config.genlayer.contractAddress && config.genlayer.operatorPrivateKey
@@ -195,11 +184,41 @@ export async function readSettled<T>(
   return value;
 }
 
+/**
+ * Same "accepted-but-not-yet-readable" lag as readSettled, but for reads
+ * that RAISE (e.g. get_competition/get_submission/get_dispute all throw
+ * "not found" via the contract's own UserError) rather than returning a
+ * partial value — retries on the exception itself, and optionally on a
+ * predicate over the value once found (e.g. waiting for status to catch up
+ * to a second write). Returns null if it never settles. Used by the
+ * *_confirm routes: the frontend's write just reached ACCEPTED, but a read
+ * moments later can still 404 or show stale state briefly.
+ */
+export async function readUntilFound<T>(
+  functionName: string,
+  args: any[],
+  isSettled: (v: T) => boolean = () => true,
+  retries = 6,
+  delayMs = 3000
+): Promise<T | null> {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      const value = (await readContract(functionName, args)) as T;
+      if (isSettled(value)) return value;
+    } catch {
+      /* not found yet — fall through to retry */
+    }
+    if (i < retries) await new Promise((r) => setTimeout(r, delayMs));
+  }
+  return null;
+}
+
 // ---------- Operator (admin) transactions ----------
 
-/** Used only for the automated official weekly arena — always value=0.
- * Anyone-hosted arenas go through createCompetitionAsUser instead so the
- * real GEN prize pool comes from the actual host's own wallet. */
+/** Used only for the automated official weekly arena — always
+ * prizePoolUsdc=0. Anyone-hosted arenas are created and opened by the HOST'S
+ * OWN connected wallet directly from the frontend (see frontend/lib/genlayer.ts)
+ * — this backend holds no user private keys. */
 export async function createCompetitionOnChain(
   id: string,
   title: string,
@@ -213,53 +232,25 @@ export async function createCompetitionOnChain(
     theme,
     startsAt,
     endsAt,
+    0,
   ]);
 }
 
-// ---------- User-signed value-transfer transactions ----------
-
-/** Creates a competition signed by the HOST's own wallet. `prizeAtto` (may
- * be 0 for a prestige-only arena) is sent as real GEN value and becomes the
- * competition's escrowed, on-chain prize pool. */
-export async function createCompetitionAsUser(
-  userPrivateKey: string,
-  id: string,
-  title: string,
-  theme: string,
-  startsAt: string,
-  endsAt: string,
-  prizeAtto: bigint
-): Promise<string> {
-  return writeAs(
-    await getUserClient(userPrivateKey),
-    "create_competition",
-    [id, title, theme, startsAt, endsAt],
-    prizeAtto
-  );
-}
-
-/** Anyone (host, sponsor, community member) can top up a competition's
- * real GEN prize pool with their own wallet before it finalizes. */
-export async function fundCompetitionOnChain(
-  userPrivateKey: string,
+/** Admin/relayer-only: record that a finalized competition's winners were
+ * pushed to the Base Sepolia escrow (services/baseSepolia.ts) and that
+ * transaction confirmed. Moves no value on this chain. */
+export async function markPrizesRelayedOnChain(
   competitionId: string,
-  amountAtto: bigint
+  relayTxHash: string
 ): Promise<string> {
-  return writeAs(
-    await getUserClient(userPrivateKey),
-    "fund_competition",
-    [competitionId],
-    amountAtto
-  );
+  return writeAs(await getOperatorClient(), "mark_prizes_relayed", [
+    competitionId,
+    relayTxHash,
+  ]);
 }
 
-/** Winner pulls their claimable GEN reward balance to their own wallet.
- * This is a genuine on-chain native-currency transfer out of the contract's
- * own escrowed balance, not an internal points ledger. */
-export async function claimRewardOnChain(userPrivateKey: string): Promise<string> {
-  return writeAs(await getUserClient(userPrivateKey), "claim_reward", []);
-}
-
+/** Used only for the operator's own arenas (the official weekly rollover) —
+ * the operator is the creator in that case, so it's entitled to open it. */
 export async function openCompetitionOnChain(id: string): Promise<string> {
   return writeAs(await getOperatorClient(), "open_competition", [id]);
 }
@@ -303,48 +294,6 @@ export async function resolveDisputeOnChain(
   ]);
 }
 
-// ---------- User-signed transactions (custodial wallet) ----------
-
-export async function submitMemeOnChain(
-  userPrivateKey: string,
-  competitionId: string,
-  submissionId: string,
-  title: string,
-  caption: string,
-  imageUrl: string,
-  contextUrl: string,
-  tagsJson: string,
-  submittedAt: string
-): Promise<string> {
-  return writeAs(await getUserClient(userPrivateKey), "submit_meme", [
-    competitionId,
-    submissionId,
-    title,
-    caption,
-    imageUrl,
-    contextUrl,
-    tagsJson,
-    submittedAt,
-  ]);
-}
-
-export async function openDisputeOnChain(
-  userPrivateKey: string,
-  disputeId: string,
-  submissionId: string,
-  reason: string,
-  evidenceUrl: string,
-  openedAt: string
-): Promise<string> {
-  return writeAs(await getUserClient(userPrivateKey), "open_dispute", [
-    disputeId,
-    submissionId,
-    reason,
-    evidenceUrl,
-    openedAt,
-  ]);
-}
-
 // ---------- Reads ----------
 
 export async function getOnchainSubmission(submissionId: string) {
@@ -359,36 +308,13 @@ export async function getOnchainLeaderboard(competitionId: string) {
   return readContract("get_leaderboard", [competitionId]);
 }
 
-export async function getOnchainRewardBalance(address: string) {
-  return readContract("get_reward_balance", [address]);
-}
-
-/** Real, spendable GEN balance of any wallet — chain-level native balance,
- * distinct from get_reward_balance (which is only the contract's
- * not-yet-claimed escrow for that address). This is what a dashboard
- * should show as "your GEN". */
-export async function getWalletBalance(address: string): Promise<string> {
-  const client = await getOperatorClient();
-  const balance = await client.getBalance({ address });
-  return (balance as bigint).toString();
-}
-
-/** Poll a wallet's real balance until it rises above `aboveAtto`, or give
- * up and return the last-seen value. Native-balance analogue of
- * readSettled — a claim's triggered transfer settles slightly after the
- * claim_reward call itself finalizes. */
-export async function waitForWalletIncrease(
-  address: string,
-  aboveAtto: string,
-  retries = 15,
-  delayMs = 4000
-): Promise<string> {
-  let value = await getWalletBalance(address);
-  for (let i = 0; i < retries && BigInt(value) <= BigInt(aboveAtto); i++) {
-    await new Promise((r) => setTimeout(r, delayMs));
-    value = await getWalletBalance(address);
-  }
-  return value;
+/** Declared USDC (base units) an address is owed across all won
+ * competitions, per GenLayer's own bookkeeping. Informational only — real,
+ * claimable USDC lives on the Base Sepolia escrow contract; use
+ * services/baseSepolia.ts's getEscrowClaimable for the actual claimable
+ * amount once a competition has been relayed. */
+export async function getDeclaredReward(address: string) {
+  return readContract("get_declared_reward", [address]);
 }
 
 export async function getContractInfo() {

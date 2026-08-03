@@ -16,19 +16,29 @@ export const config = {
   // 32-byte hex key for AES-256-GCM wallet encryption
   walletEncryptionKey: required("WALLET_ENCRYPTION_KEY"),
   frontendUrl: process.env.FRONTEND_URL || "http://localhost:3000",
-  brevo: {
-    apiKey: process.env.BREVO_API_KEY || "",
-    senderEmail: process.env.BREVO_SENDER_EMAIL || "",
-    senderName: process.env.BREVO_SENDER_NAME || "Meme Olympics",
-  },
   genlayer: {
     rpcUrl: process.env.GENLAYER_RPC_URL || "https://studio.genlayer.com/api",
     contractAddress: process.env.GENLAYER_CONTRACT_ADDRESS || "",
     // Operator account used for admin txs (create/finalize competitions)
     operatorPrivateKey: process.env.GENLAYER_OPERATOR_PRIVATE_KEY || "",
   },
-  adminEmails: (process.env.ADMIN_EMAILS || "")
+  // Payment layer: GenLayer only judges; real USDC prize money lives in
+  // MemeOlympicsEscrow on Base Sepolia. See backend/src/services/baseSepolia.ts.
+  baseSepolia: {
+    rpcUrl: process.env.BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org",
+    usdcAddress:
+      process.env.BASE_SEPOLIA_USDC_ADDRESS ||
+      "0x036CbD53842c5426634e7929541eC2318f3dCF7e", // Circle's official Base Sepolia USDC
+    escrowAddress: process.env.MEME_OLYMPICS_ESCROW_ADDRESS || "",
+    // Backend-controlled wallet authorized as the escrow's relayer. Never
+    // hardcode this — set it in backend/.env (gitignored) or your deploy
+    // platform's secret store, never in source or chat.
+    relayerPrivateKey: process.env.BASE_SEPOLIA_RELAYER_PRIVATE_KEY || "",
+  },
+  // Wallets auto-promoted to admin on their first wallet-login. Identity is
+  // wallet-only now — there's no email to gate this on anymore.
+  adminWallets: (process.env.ADMIN_WALLETS || "")
     .split(",")
-    .map((e) => e.trim().toLowerCase())
+    .map((a) => a.trim().toLowerCase())
     .filter(Boolean),
 };

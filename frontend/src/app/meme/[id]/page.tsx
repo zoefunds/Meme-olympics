@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { api, getUser } from "@/lib/api";
+import { connectWallet } from "@/lib/baseSepolia";
+import { genlayerWrite } from "@/lib/genlayer";
 import {
   GlassCard,
   MonoLabel,
@@ -58,6 +60,28 @@ const STATUS_TONE: Record<string, "cyan" | "gold" | "muted"> = {
   disqualified: "muted", failed: "muted",
 };
 
+type DisputeRecord = {
+  id: string;
+  reason: string;
+  evidenceUrl: string;
+  status: string;
+  verdict: string;
+  createdAt: string;
+  username: string;
+};
+
+const DISPUTE_STATUS_TONE: Record<string, "cyan" | "gold" | "muted"> = {
+  open: "cyan",
+  upheld: "gold",
+  rejected: "muted",
+};
+
+const DISPUTE_STATUS_COPY: Record<string, string> = {
+  open: "Awaiting validator ruling",
+  upheld: "Upheld — submission disqualified",
+  rejected: "Rejected — original verdict stands",
+};
+
 export default function MemeDetail() {
   const params = useParams<{ id: string }>();
   const [sub, setSub] = useState<Sub | null>(null);
@@ -66,13 +90,23 @@ export default function MemeDetail() {
   const [dispute, setDispute] = useState({ reason: "", evidenceUrl: "" });
   const [disputeMsg, setDisputeMsg] = useState("");
   const [disputeBusy, setDisputeBusy] = useState(false);
+  const [disputeHistory, setDisputeHistory] = useState<DisputeRecord[]>([]);
+
+  function loadDisputeHistory() {
+    if (!params?.id) return;
+    api<{ disputes: DisputeRecord[] }>(`/api/disputes?submissionId=${params.id}`)
+      .then((r) => setDisputeHistory(r.disputes))
+      .catch(() => undefined);
+  }
 
   async function submitDispute(e: React.FormEvent) {
     e.preventDefault();
     setDisputeBusy(true);
     setDisputeMsg("");
     try {
-      await api("/api/disputes", {
+      const { dispute: created } = await api<{
+        dispute: { id: string; createdAt: string };
+      }>("/api/disputes", {
         method: "POST",
         body: JSON.stringify({
           submissionId: sub!.id,
@@ -80,10 +114,27 @@ export default function MemeDetail() {
           evidenceUrl: dispute.evidenceUrl,
         }),
       });
+
+      setDisputeMsg("Connecting wallet…");
+      const address = await connectWallet({ switchChain: false });
+
+      setDisputeMsg("Confirm OPEN DISPUTE in your wallet (GenLayer)…");
+      await genlayerWrite(address, "open_dispute", [
+        created.id,
+        sub!.id,
+        dispute.reason,
+        dispute.evidenceUrl,
+        created.createdAt,
+      ]);
+
+      await api(`/api/disputes/${created.id}/onchain-confirm`, { method: "POST" });
+
       setDisputeMsg(
         "Challenge filed. The contract will fetch your evidence on-chain and validators will rule on it."
       );
       setShowDispute(false);
+      setDispute({ reason: "", evidenceUrl: "" });
+      loadDisputeHistory();
     } catch (err) {
       setDisputeMsg((err as Error).message);
     } finally {
@@ -102,6 +153,7 @@ export default function MemeDetail() {
         })
         .catch((e) => setError((e as Error).message));
     load();
+    loadDisputeHistory();
     // Poll while judging is still in flight so the score/verdict appear
     // live; stop once the outcome is settled — no point polling forever.
     const id = setInterval(() => {
@@ -111,7 +163,14 @@ export default function MemeDetail() {
       }
       load();
     }, 10000);
-    return () => clearInterval(id);
+    // Disputes can still resolve after judging settles — keep polling
+    // those on a slower cadence regardless of submission status.
+    const disputeId = setInterval(loadDisputeHistory, 20000);
+    return () => {
+      clearInterval(id);
+      clearInterval(disputeId);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params?.id]);
 
   if (error) {
@@ -244,6 +303,33 @@ export default function MemeDetail() {
                   <span className="text-on-variant block">CONSENSUS MODEL</span>
                   <span>Leader + independent validator re-judging (±15 tolerance)</span>
                 </div>
+              </div>
+            </GlassCard>
+          )}
+
+          {disputeHistory.length > 0 && (
+            <GlassCard className="p-6">
+              <MonoLabel className="block mb-4">Dispute History</MonoLabel>
+              <div className="space-y-4">
+                {disputeHistory.map((d) => (
+                  <div key={d.id} className="receipt-divider pt-4 first:pt-0 first:border-t-0">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="font-mono text-xs text-cyan-soft">
+                        filed by @{d.username}
+                      </span>
+                      <StatusChip
+                        label={(DISPUTE_STATUS_COPY[d.status] || d.status).toUpperCase()}
+                        tone={DISPUTE_STATUS_TONE[d.status] || "muted"}
+                      />
+                    </div>
+                    <p className="text-on-variant text-sm mt-2">{d.reason}</p>
+                    {d.verdict && (
+                      <p className="font-mono text-xs text-on-variant mt-2 italic">
+                        &ldquo;{d.verdict}&rdquo;
+                      </p>
+                    )}
+                  </div>
+                ))}
               </div>
             </GlassCard>
           )}

@@ -7,24 +7,17 @@ from dataclasses import dataclass
 
 from genlayer import *
 
-
-@gl.evm.contract_interface
-class _Recipient:
-    """EVM-interface stub used solely to route native GEN payouts through
-    GenLayer's EVM-compatibility layer. This is the ONLY mechanism that
-    successfully delivers value to a plain wallet (EOA) — confirmed by
-    live testing against real funded accounts. `gl.get_contract_at(addr)
-    .emit_transfer(...)` (the pattern suggested by genvm's own docs and
-    examples) instead fails with "Contract ... not found" against any
-    address without deployed contract code, which is what every user's
-    custodial wallet is. Route ALL payouts through _send_gen below —
-    never call emit_transfer directly elsewhere."""
-
-    class View:
-        pass
-
-    class Write:
-        pass
+# ----------------------------------------------------------------------------
+# Payment architecture: GenLayer is the adjudication layer ONLY. It never
+# escrows or moves real value. Prize money is real USDC held in a dedicated
+# escrow contract on Base Sepolia (contracts/base/MemeOlympicsEscrow.sol).
+# This contract just judges memes and produces a deterministic winners list
+# with USDC amounts owed; a backend relayer reads that list once a
+# competition finalizes and calls the escrow contract on Base Sepolia to
+# make the payout claimable there. See `mark_prizes_relayed` below — the
+# relayer calls it (idempotency marker only, moves no value here) after its
+# Base Sepolia transaction confirms.
+# ----------------------------------------------------------------------------
 
 # ----------------------------------------------------------------------------
 # Error classification prefixes.
@@ -93,12 +86,15 @@ DEFAULT_WEIGHTS_BP = {
     "creativity": 800,
 }
 
-# Consensus tolerances — deliberately generous so honest validators with
-# slightly different LLM outputs still agree, avoiding unnecessary leader
-# rotation, while dishonest/broken leaders still get caught.
-SCORE_TOLERANCE = 15          # total score points out of 100
-CRITERION_TOLERANCE = 5       # per-criterion points out of 10
-CONFIDENCE_TOLERANCE = 35     # plagiarism confidence, out of 100
+# Consensus tolerances — tight enough that two honest but slightly-differing
+# LLM runs still agree on genuine outliers, while dishonest/broken leaders
+# still get caught. (Tightened from 15/5/7-of-9 after review: the previous
+# tolerances let a leader and validator disagree on nearly 1/3 of the total
+# score band and still reach consensus.)
+SCORE_TOLERANCE = 10          # total score points out of 100
+CRITERION_TOLERANCE = 3       # per-criterion points out of 10
+CONFIDENCE_TOLERANCE = 25     # plagiarism confidence, out of 100
+CRITERIA_AGREEMENT_MIN = 8    # of 9 criteria must be within tolerance
 
 # Hard limits (anti-gaming / compute-bound safety).
 MAX_TITLE_LEN = 120
@@ -109,7 +105,7 @@ MAX_TAG_LEN = 32
 MAX_SUBMISSIONS_PER_COMPETITION = 500
 MAX_DISPUTE_REASON_LEN = 1000
 
-ATTO = 10**18  # reward points are stored atto-scaled, standard cross-chain
+USDC_DECIMALS = 6  # prize amounts are stored in USDC's own base units (not atto)
 
 
 # ----------------------------------------------------------------------------
@@ -129,13 +125,21 @@ class Competition:
     status: str
     starts_at: str            # ISO-8601 string
     ends_at: str              # ISO-8601 string
-    prize_pool_atto: u256     # total reward points for this competition
+    prize_pool_atto: u256     # DEPRECATED, kept 0 — see prize_pool_usdc
     winner_count: u256
     submission_count: u256
     created_by: str           # hex address of creator
     created_at: str
     finalized_at: str
-    winners_json: str         # JSON: [{submission_id, rank, reward_atto}]
+    winners_json: str         # JSON: [{submission_id, rank, reward_usdc}]
+    # Appended: real prize money now lives in the Base Sepolia USDC escrow
+    # (contracts/base/MemeOlympicsEscrow.sol), not here. This is the
+    # declared/informational pool in USDC base units (6 decimals) that
+    # should match what's actually deposited under this competition_id on
+    # that escrow contract — the escrow's own balance is the source of
+    # truth for real funds, this is display/bookkeeping only.
+    prize_pool_usdc: u256
+    relay_tx_hash: str        # Base Sepolia tx hash once winners were relayed
 
 
 @allow_storage
@@ -159,6 +163,9 @@ class Submission:
     image_accessible: bool
     evaluation_summary: str
     evaluated_at: str
+    # Appended: hard eligibility gate result (see CRITERIA / evaluate_submission).
+    eligible: bool
+    eligibility_reason: str
 
 
 @allow_storage
@@ -221,15 +228,16 @@ class MemeOlympics(gl.Contract):
     dispute_ids: DynArray[str]
     submission_dispute_count: TreeMap[str, u256]
 
-    # Rewards & users — reward_balances_atto is REAL, CLAIMABLE GEN (native
-    # token), escrowed in this contract's own balance. It is funded only by
-    # actual `value` sent to create_competition/fund_competition, and paid
-    # out only by claim_reward's on-chain transfer. It is not an internal
-    # points ledger.
+    # Rewards & users — NO real value is ever held here (see payment
+    # architecture note at the top of the file). reward_balances_atto is a
+    # declared/informational USDC-base-units ledger (field name kept for
+    # storage-layout stability), populated at finalize_competition and only
+    # meaningful once the matching competition's prize was actually
+    # deposited on the Base Sepolia escrow contract.
     user_stats: TreeMap[str, UserStats]
-    reward_balances_atto: TreeMap[str, u256]
-    total_rewards_distributed_atto: u256    # allocated to winners at finalize
-    total_rewards_claimed_atto: u256        # actually transferred out via claim_reward
+    reward_balances_atto: TreeMap[str, u256]        # declared USDC owed, per address
+    total_rewards_distributed_atto: u256    # declared USDC allocated at finalize
+    total_rewards_claimed_atto: u256        # declared USDC across mark_prizes_relayed calls
 
     # Counters / audit
     total_competitions: u256
@@ -600,8 +608,9 @@ class MemeOlympics(gl.Contract):
     def set_competition_defaults(self, winner_count: int, max_per_user: int) -> None:
         """Default winner count / per-user submission cap for NEW
         competitions. Prize pools are no longer a config default — they are
-        real GEN, funded per-competition via create_competition's payable
-        value or fund_competition."""
+        a declared USDC amount set per-competition via create_competition's
+        `prize_pool_usdc` or fund_competition, backed by a real deposit on
+        the Base Sepolia escrow contract."""
         self._require_admin()
         if winner_count < 1 or winner_count > 25:
             raise gl.vm.UserError(f"{ERROR_EXPECTED} winner_count must be 1..25")
@@ -616,7 +625,7 @@ class MemeOlympics(gl.Contract):
     # ==================================================================
     # Competition lifecycle (deterministic writes)
     # ==================================================================
-    @gl.public.write.payable
+    @gl.public.write
     def create_competition(
         self,
         competition_id: str,
@@ -624,6 +633,7 @@ class MemeOlympics(gl.Contract):
         theme: str,
         starts_at: str,
         ends_at: str,
+        prize_pool_usdc: int = 0,
     ) -> None:
         """Create a competition. OPEN TO ALL, unconditionally — anyone can
         host an arena, with no lifetime cap and no admin approval ever
@@ -633,11 +643,16 @@ class MemeOlympics(gl.Contract):
         that resets automatically, unlike a hard on-chain cap that would
         need an admin bypass) — see backend rate limiting on this route.
 
-        PAYABLE: any GEN sent with this call becomes the competition's real,
-        escrowed prize pool (0 is valid — a prestige-only arena with no
-        monetary reward). Anyone can add more later via fund_competition."""
+        NOT PAYABLE: this contract never escrows real value. `prize_pool_usdc`
+        (USDC base units, 6 decimals) is a declared amount for display only —
+        the real prize money is deposited separately by the host on the
+        Base Sepolia escrow contract under this same competition_id (0 is
+        valid — a prestige-only arena with no monetary reward). Anyone can
+        bump the declared amount later via fund_competition."""
         self._require_not_paused()
-        funded = u256(int(gl.message.value))
+        if prize_pool_usdc < 0:
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} prize_pool_usdc must be >= 0")
+        funded = u256(prize_pool_usdc)
         sender = self._sender()
         # Track creation count for stats only — no cap, no admin bypass needed.
         creator_key = f"created_by:{sender}"
@@ -666,38 +681,42 @@ class MemeOlympics(gl.Contract):
             status=COMP_STATUS_CREATED,
             starts_at=starts_at,
             ends_at=ends_at,
-            prize_pool_atto=funded,
+            prize_pool_atto=u256(0),
             winner_count=self.default_winner_count,
             submission_count=u256(0),
             created_by=self._sender(),
             created_at=starts_at,
             finalized_at="",
             winners_json="[]",
+            prize_pool_usdc=funded,
+            relay_tx_hash="",
         )
         self.competition_ids.append(competition_id)
         self.total_competitions = u256(int(self.total_competitions) + 1)
         self._log(
             "competition_created",
-            {"id": competition_id, "funded_atto": int(funded)},
+            {"id": competition_id, "declared_prize_usdc": int(funded)},
         )
 
-    @gl.public.write.payable
-    def fund_competition(self, competition_id: str) -> None:
-        """Add GEN to a competition's real prize pool. Open to anyone —
+    @gl.public.write
+    def fund_competition(self, competition_id: str, added_usdc: int) -> None:
+        """Bump a competition's declared USDC prize pool. Open to anyone —
         the host, sponsors, or the community — as long as the arena hasn't
-        finalized or been cancelled yet."""
+        finalized or been cancelled yet. NOT PAYABLE: still no real value
+        moves here — deposit the matching USDC on the Base Sepolia escrow
+        contract under this competition_id."""
         self._require_not_paused()
         comp = self._get_competition(competition_id)
         if comp.status in (COMP_STATUS_FINALIZED, COMP_STATUS_CANCELLED):
             raise gl.vm.UserError(
                 f"{ERROR_EXPECTED} Competition '{comp.status}' can no longer be funded"
             )
-        added = int(gl.message.value)
-        if added <= 0:
-            raise gl.vm.UserError(f"{ERROR_EXPECTED} Must send GEN value to fund")
-        comp.prize_pool_atto = u256(int(comp.prize_pool_atto) + added)
+        if added_usdc <= 0:
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} added_usdc must be > 0")
+        comp.prize_pool_usdc = u256(int(comp.prize_pool_usdc) + added_usdc)
         self._log(
-            "competition_funded", {"id": competition_id, "added_atto": added}
+            "competition_funded",
+            {"id": competition_id, "added_usdc": added_usdc},
         )
 
     @gl.public.write
@@ -845,6 +864,8 @@ class MemeOlympics(gl.Contract):
             image_accessible=False,
             evaluation_summary="",
             evaluated_at="",
+            eligible=True,
+            eligibility_reason="",
         )
         self.submission_ids.append(submission_id)
         self._append_comp_submission(competition_id, submission_id)
@@ -898,7 +919,19 @@ SUBMISSION METADATA:
 - Image accessibility check: {page_note}
 
 TASKS:
-1. Score each criterion as an integer 0-10:
+0. Eligibility gate — answer BEFORE scoring. Set "eligible" to false ONLY if
+   the submission fails to even be a real meme entry, e.g.: the image is
+   blank/corrupted/unrelated stock content with no meme composition (text
+   overlay, template, juxtaposition, etc.), the title/caption is empty or
+   pure gibberish/spam, or the content is obviously unrelated to memes
+   entirely (an ad, a random product photo, a test upload). Do NOT set it
+   false just because the meme is low-quality, unfunny, or off-theme — that
+   is reflected in the criteria scores below, not the gate. Give a short
+   "eligibility_reason" either way (e.g. "valid meme entry" when eligible).
+
+1. Score each criterion as an integer 0-10 (still fill this in even if not
+   eligible — use your honest best-effort scores; the contract will zero the
+   final score when the gate fails):
 {criteria_lines}
 
 2. Plagiarism / recycling assessment. Look at the actual image content: is
@@ -924,6 +957,8 @@ visual evidence is strong; when in doubt between suspicious and copied, choose
 
 Return ONLY a JSON object exactly like:
 {{
+  "eligible": true,
+  "eligibility_reason": "...",
   "criteria": {{ {", ".join(f'"{c}": 0' for c in CRITERIA)} }},
   "plagiarism_verdict": "original|suspicious|copied",
   "plagiarism_confidence": 0,
@@ -969,6 +1004,13 @@ Return ONLY a JSON object exactly like:
         )
 
         # 3) Defensive normalization to stable decision fields.
+        eligible_raw = self._pick(analysis, "eligible", ("is_eligible", "valid"))
+        eligible = bool(eligible_raw) if eligible_raw is not None else True
+        eligibility_reason = str(
+            self._pick(analysis, "eligibility_reason", ("reason", "ineligible_reason"))
+            or ("" if eligible else "not a valid meme entry")
+        )[:300]
+
         raw_criteria = self._pick(analysis, "criteria", ("scores", "ratings"))
         if not isinstance(raw_criteria, dict):
             raise gl.vm.UserError(f"{ERROR_LLM} missing criteria object")
@@ -1007,13 +1049,17 @@ Return ONLY a JSON object exactly like:
 
         weights = self._get_weights()
         total_bp = sum(criteria_scores[c] * weights[c] for c in CRITERIA)
-        total_score = max(0, min(100, total_bp // 1000))  # 10*10000bp -> 100
+        # Hard gate: an ineligible submission scores 0 regardless of what the
+        # per-axis numbers say — axes never rescue a disqualified entry.
+        total_score = 0 if not eligible else max(0, min(100, total_bp // 1000))
 
         summary = str(
             self._pick(analysis, "summary", ("analysis", "reasoning")) or ""
         )[:500]
 
         return {
+            "eligible": eligible,
+            "eligibility_reason": eligibility_reason,
             "criteria": criteria_scores,
             "total_score": int(total_score),
             "plagiarism_verdict": verdict,
@@ -1063,6 +1109,8 @@ Return ONLY a JSON object exactly like:
             image_accessible=False,
             evaluation_summary="",
             evaluated_at="",
+            eligible=True,
+            eligibility_reason="",
         )
 
         contract = self
@@ -1087,6 +1135,14 @@ Return ONLY a JSON object exactly like:
                 # accept the leader rather than rotating for network noise.
                 return msg.startswith(ERROR_TRANSIENT)
             except Exception:
+                return False
+
+            # --- Gate 0: eligibility is a hard gate. Both sides must agree
+            # on whether this is even a scoreable meme entry at all — this
+            # is checked BEFORE plagiarism/score/criteria, and no amount of
+            # axis agreement below can rescue a mismatch here.
+            leader_eligible = bool(leader.get("eligible", True))
+            if leader_eligible != mine["eligible"]:
                 return False
 
             # --- Gate 1: plagiarism "copied" is a hard gate. Both sides
@@ -1119,6 +1175,19 @@ Return ONLY a JSON object exactly like:
                 if not both_copied_ish:
                     return False
 
+            # --- Gate 1b: when either side flagged anything but a clean
+            # "original", require the two confidence numbers to actually be
+            # close — otherwise a leader could claim "copied, 71% confident"
+            # against a validator's "copied, 5% confident" and still pass
+            # gate 1 above purely because both crossed the same threshold.
+            both_original = (
+                leader_verdict == PLAGIARISM_ORIGINAL
+                and mine["plagiarism_verdict"] == PLAGIARISM_ORIGINAL
+            )
+            if not both_original:
+                if abs(leader_conf - mine["plagiarism_confidence"]) > CONFIDENCE_TOLERANCE:
+                    return False
+
             # --- Gate 2: total score tolerance.
             try:
                 leader_total = int(leader.get("total_score", -1))
@@ -1129,9 +1198,9 @@ Return ONLY a JSON object exactly like:
             if abs(leader_total - mine["total_score"]) > SCORE_TOLERANCE:
                 return False
 
-            # --- Gate 3: per-criterion sanity (loose). Every leader score
-            # must be a valid 0..10 int and within tolerance of the
-            # validator's own score for at least 7 of 9 criteria.
+            # --- Gate 3: per-criterion sanity. Every leader score must be a
+            # valid 0..10 int and within tolerance of the validator's own
+            # score for at least CRITERIA_AGREEMENT_MIN of 9 criteria.
             leader_criteria = leader.get("criteria")
             if not isinstance(leader_criteria, dict):
                 return False
@@ -1145,7 +1214,7 @@ Return ONLY a JSON object exactly like:
                     return False
                 if abs(lv - mine["criteria"][criterion]) <= CRITERION_TOLERANCE:
                     close_enough += 1
-            if close_enough < 7:
+            if close_enough < CRITERIA_AGREEMENT_MIN:
                 return False
 
             # --- Gate 4: image accessibility must match (it is a near-
@@ -1170,13 +1239,23 @@ Return ONLY a JSON object exactly like:
         sub.image_accessible = bool(result["image_accessible"])
         sub.evaluation_summary = str(result["summary"])[:500]
         sub.evaluated_at = sub.submitted_at  # chain has no clock; see docs
+        sub.eligible = bool(result["eligible"])
+        sub.eligibility_reason = str(result["eligibility_reason"])[:300]
 
         disqualified = (
             result["plagiarism_verdict"] == PLAGIARISM_COPIED
             and int(result["plagiarism_confidence"]) >= 70
         ) or not result["image_accessible"]
 
-        if disqualified:
+        if not sub.eligible:
+            # Gate 0 failure — never scoreable, distinct from a disqualified
+            # (plagiarized/unreachable) entry that at least passed the
+            # eligibility bar. Kept separate so hosts/UI can tell "wasn't a
+            # real meme" apart from "was a meme but broke the rules".
+            sub.status = SUB_STATUS_REJECTED
+            stats = self._touch_user(sub.author)
+            stats.disqualifications = u256(int(stats.disqualifications) + 1)
+        elif disqualified:
             sub.status = SUB_STATUS_DISQUALIFIED
             stats = self._touch_user(sub.author)
             stats.disqualifications = u256(int(stats.disqualifications) + 1)
@@ -1204,10 +1283,12 @@ Return ONLY a JSON object exactly like:
     @gl.public.write
     def finalize_competition(self, competition_id: str, finalized_at: str) -> None:
         """Deterministically rank evaluated submissions, select winners and
-        allocate real GEN rewards (claimable via claim_reward). No LLM/web
-        calls — cannot fail consensus. Allowed for the competition's creator
-        or any admin, so hosts can end their own arena without waiting on
-        an admin."""
+        compute each one's USDC reward share. Purely a judging-side record —
+        no value moves here; the backend relayer reads this result and calls
+        the Base Sepolia escrow contract to make the payout claimable there
+        (see `mark_prizes_relayed`). No LLM/web calls — cannot fail
+        consensus. Allowed for the competition's creator or any admin, so
+        hosts can end their own arena without waiting on an admin."""
         comp = self._get_competition(competition_id)
         self._require_creator_or_admin(comp)
         if comp.status != COMP_STATUS_JUDGING:
@@ -1228,7 +1309,7 @@ Return ONLY a JSON object exactly like:
         ranked.sort()
 
         winner_count = min(int(comp.winner_count), len(ranked))
-        pool = int(comp.prize_pool_atto)
+        pool = int(comp.prize_pool_usdc)
 
         # Reward split: rank-weighted harmonic-style distribution that always
         # sums to <= pool using integer math. Weights: 1st=50%, 2nd=30%,
@@ -1258,7 +1339,7 @@ Return ONLY a JSON object exactly like:
                     "author": sub.author,
                     "rank": index + 1,
                     "score": int(sub.total_score),
-                    "reward_atto": str(reward),
+                    "reward_usdc": str(reward),
                 }
             )
 
@@ -1292,60 +1373,37 @@ Return ONLY a JSON object exactly like:
         return shares
 
     # ==================================================================
-    # Reward claims — REAL GEN value transfer, not an internal points ledger.
+    # Payout relay — NO value moves on this chain. This contract only
+    # records that a competition's winners were pushed to the Base Sepolia
+    # USDC escrow, so the backend relayer job is idempotent and the frontend
+    # can show payout status without re-deriving it off-chain.
     # ==================================================================
     @gl.public.write
-    def claim_reward(self) -> None:
-        """Pull your full accumulated GEN reward balance out of the
-        contract's own escrowed funds, in one on-chain native transfer to
-        your own wallet. Self-serve: only the caller can claim their own
-        balance, and only what this contract actually holds.
-
-        Note: rewards accumulate across ALL competitions you've won. If a
-        plagiarism dispute is later upheld against a submission whose reward
-        you already claimed, the GEN cannot be recovered — on-chain value
-        transfers are irreversible, same as any other blockchain payout."""
-        self._require_not_paused()
-        sender = self._sender()
-        amount = (
-            int(self.reward_balances_atto[sender])
-            if sender in self.reward_balances_atto
-            else 0
-        )
-        if amount <= 0:
-            raise gl.vm.UserError(f"{ERROR_EXPECTED} No claimable GEN reward")
-        if amount > int(self.balance):
-            # Should never happen if funding/accounting stayed consistent;
-            # fail safe rather than attempt a transfer the contract can't cover.
+    def mark_prizes_relayed(self, competition_id: str, relay_tx_hash: str) -> None:
+        """Admin/relayer-only marker: call this once the winners list for
+        `competition_id` has been submitted to the Base Sepolia escrow
+        contract (MemeOlympicsEscrow.setWinners) and that transaction has
+        confirmed. Moves no value — winners actually claim their USDC
+        directly from the escrow contract on Base Sepolia."""
+        self._require_admin()
+        comp = self._get_competition(competition_id)
+        if comp.status != COMP_STATUS_FINALIZED:
             raise gl.vm.UserError(
-                f"{ERROR_EXPECTED} Contract balance insufficient for claim"
+                f"{ERROR_EXPECTED} Competition is '{comp.status}', expected 'finalized'"
             )
-        # Checks-effects-interactions: zero the claimable balance, THEN
-        # persist, THEN transfer — a second claim call (re-entrant or
-        # repeated) finds the ledger already at 0 before ever reaching
-        # the transfer, so double-spend is structurally impossible.
-        self.reward_balances_atto[sender] = u256(0)
+        if comp.relay_tx_hash:
+            raise gl.vm.UserError(
+                f"{ERROR_EXPECTED} Already marked relayed: {comp.relay_tx_hash}"
+            )
+        if not relay_tx_hash:
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} relay_tx_hash required")
+        comp.relay_tx_hash = relay_tx_hash
         self.total_rewards_claimed_atto = u256(
-            int(self.total_rewards_claimed_atto) + amount
+            int(self.total_rewards_claimed_atto) + int(comp.prize_pool_usdc)
         )
-        self._log("reward_claimed", {"addr": sender, "amount_atto": amount})
-        self._send_gen(sender, u256(amount))
-
-    def _send_gen(self, to_address: str, amount: u256) -> None:
-        """Single choke point for every native GEN payout this contract
-        makes — route ALL transfers through here, never call emit_transfer
-        directly elsewhere. Uses the EVM-interface stub (_Recipient), the
-        only mechanism confirmed (via live testing against real funded
-        accounts) to actually deliver value to a plain wallet (EOA):
-        `gl.get_contract_at(addr).emit_transfer(...)` — the pattern shown
-        in genvm's own docs/examples — fails with "Contract ... not found"
-        against any address without deployed contract code, which is what
-        every custodial wallet is."""
-        if not to_address:
-            raise gl.vm.UserError(f"{ERROR_EXPECTED} Missing recipient address")
-        if int(amount) <= 0:
-            raise gl.vm.UserError(f"{ERROR_EXPECTED} Transfer amount must be positive")
-        _Recipient(Address(to_address)).emit_transfer(value=amount)
+        self._log(
+            "prizes_relayed", {"id": competition_id, "tx": relay_tx_hash}
+        )
 
     # ==================================================================
     # Disputes — evidence-based, contract-side web verification
@@ -1513,6 +1571,8 @@ Return ONLY JSON: {{"uphold": true/false, "confidence": 0-100, "summary": "1-2 s
             image_accessible=sub.image_accessible,
             evaluation_summary="",
             evaluated_at="",
+            eligible=sub.eligible,
+            eligibility_reason="",
         )
 
         contract = self
@@ -1583,13 +1643,17 @@ Return ONLY JSON: {{"uphold": true/false, "confidence": 0-100, "summary": "1-2 s
         )
 
     def _claw_back_reward(self, sub: Submission) -> None:
-        """Remove a disqualified winner's reward from balances (deterministic).
+        """Remove a disqualified winner's declared USDC reward from the
+        judging-side ledger (deterministic).
 
-        Limitation: this only reduces the CLAIMABLE ledger. If the winner
-        already called claim_reward and the real GEN already left the
-        contract, that transfer cannot be reversed — the balance is bounded
-        at 0 rather than going negative. This mirrors any blockchain payout:
-        on-chain transfers are irreversible once sent."""
+        Limitation: this only updates GenLayer's own bookkeeping. If the
+        competition was already `mark_prizes_relayed` and the winner has
+        since claimed real USDC from the Base Sepolia escrow contract, that
+        payout cannot be reversed here — this contract never held the funds
+        in the first place. Disputes against already-relayed competitions
+        need a corresponding action on the escrow contract (out of scope for
+        this record) or off-chain remediation; the balance below is bounded
+        at 0 rather than going negative."""
         comp = self._get_competition(sub.competition_id)
         try:
             winners = json.loads(comp.winners_json)
@@ -1598,7 +1662,7 @@ Return ONLY JSON: {{"uphold": true/false, "confidence": 0-100, "summary": "1-2 s
         remaining = []
         for w in winners:
             if w.get("submission_id") == sub.id:
-                reward = int(w.get("reward_atto", "0"))
+                reward = int(w.get("reward_usdc", w.get("reward_atto", "0")))
                 balance = int(self.reward_balances_atto[sub.author]) if (
                     sub.author in self.reward_balances_atto
                 ) else 0
@@ -1630,11 +1694,12 @@ Return ONLY JSON: {{"uphold": true/false, "confidence": 0-100, "summary": "1-2 s
             "total_submissions": int(self.total_submissions),
             "total_evaluations": int(self.total_evaluations),
             "total_disputes": int(self.total_disputes),
-            "total_rewards_distributed_atto": str(
+            "total_prizes_declared_usdc": str(
                 int(self.total_rewards_distributed_atto)
             ),
-            "total_rewards_claimed_atto": str(int(self.total_rewards_claimed_atto)),
-            "contract_gen_balance_atto": str(int(self.balance)),
+            "total_prizes_relayed_usdc": str(int(self.total_rewards_claimed_atto)),
+            "payment_chain": "base-sepolia",
+            "payment_asset": "USDC",
             "criteria": list(CRITERIA),
         }
 
@@ -1663,12 +1728,13 @@ Return ONLY JSON: {{"uphold": true/false, "confidence": 0-100, "summary": "1-2 s
             "status": comp.status,
             "starts_at": comp.starts_at,
             "ends_at": comp.ends_at,
-            "prize_pool_atto": str(int(comp.prize_pool_atto)),
+            "prize_pool_usdc": str(int(comp.prize_pool_usdc)),
             "winner_count": int(comp.winner_count),
             "submission_count": int(comp.submission_count),
             "created_by": comp.created_by,
             "finalized_at": comp.finalized_at,
             "winners": json.loads(comp.winners_json or "[]"),
+            "relay_tx_hash": comp.relay_tx_hash,
         }
 
     @gl.public.view
@@ -1723,6 +1789,8 @@ Return ONLY JSON: {{"uphold": true/false, "confidence": 0-100, "summary": "1-2 s
             "plagiarism_confidence": int(sub.plagiarism_confidence),
             "image_accessible": sub.image_accessible,
             "evaluation_summary": sub.evaluation_summary,
+            "eligible": sub.eligible,
+            "eligibility_reason": sub.eligibility_reason,
         }
 
     @gl.public.view
@@ -1785,7 +1853,7 @@ Return ONLY JSON: {{"uphold": true/false, "confidence": 0-100, "summary": "1-2 s
                 "submissions": 0,
                 "wins": 0,
                 "total_score_accum": 0,
-                "rewards_atto": "0",
+                "rewards_usdc": "0",
                 "disqualifications": 0,
             }
         stats = self.user_stats[key]
@@ -1794,12 +1862,17 @@ Return ONLY JSON: {{"uphold": true/false, "confidence": 0-100, "summary": "1-2 s
             "submissions": int(stats.submissions),
             "wins": int(stats.wins),
             "total_score_accum": int(stats.total_score_accum),
-            "rewards_atto": str(int(stats.rewards_atto)),
+            "rewards_usdc": str(int(stats.rewards_atto)),
             "disqualifications": int(stats.disqualifications),
         }
 
     @gl.public.view
-    def get_reward_balance(self, address: str) -> str:
+    def get_declared_reward(self, address: str) -> str:
+        """Total USDC (base units) this address has been declared as owed
+        across all won competitions. Informational only — the amount is
+        actually claimable on Base Sepolia only once the relevant
+        competition has been `mark_prizes_relayed` onto the escrow
+        contract; check that competition's `relay_tx_hash` first."""
         key = Address(address).as_hex
         if key not in self.reward_balances_atto:
             return "0"

@@ -2,6 +2,8 @@
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api, getUser, API_URL } from "@/lib/api";
+import { connectWallet } from "@/lib/baseSepolia";
+import { genlayerWrite } from "@/lib/genlayer";
 import { GlassCard, MonoLabel, PrestigeButton, SegmentedBar } from "@/components/ui";
 
 /* Submit Entry — modelled on the Submit-Entry prototype: 3-step flow
@@ -87,30 +89,46 @@ function SubmitInner() {
     if (!compId) return;
     setBusy(true);
     setError("");
-    const lines = [
-      "> Initializing GenLayer Neural Engine…",
-      "> Connection secure. Protocol 0xMEME active.",
-      "> Locking metadata into intelligent contract…",
-      "> Signing with your arena wallet…",
-      "> Broadcasting to validator set…",
-    ];
-    lines.forEach((l, i) => setTimeout(() => setLog((p) => [...p, l]), i * 500));
+    setLog((p) => [...p, "> Locking metadata into off-chain registry…"]);
     try {
-      await api("/api/submissions", {
+      const { submission } = await api<{ submission: { id: string; submittedAt?: string; createdAt: string } }>(
+        "/api/submissions",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            competitionId: compId,
+            title: form.title,
+            caption: form.caption,
+            imageUrl: form.imageUrl,
+            contextUrl: form.contextUrl || "",
+            tags: form.tags,
+          }),
+        }
+      );
+
+      setLog((p) => [...p, "> Connecting wallet…"]);
+      const address = await connectWallet({ switchChain: false });
+
+      setLog((p) => [...p, "> Confirm SUBMIT MEME in your wallet (GenLayer)…"]);
+      const { hash } = await genlayerWrite(address, "submit_meme", [
+        compId,
+        submission.id,
+        form.title,
+        form.caption,
+        form.imageUrl,
+        form.contextUrl || "",
+        JSON.stringify(form.tags),
+        submission.createdAt,
+      ]);
+
+      setLog((p) => [...p, "> Broadcasting to validator set…"]);
+      await api(`/api/submissions/${submission.id}/onchain-confirm`, {
         method: "POST",
-        body: JSON.stringify({
-          competitionId: compId,
-          title: form.title,
-          caption: form.caption,
-          imageUrl: form.imageUrl,
-          contextUrl: form.contextUrl || "",
-          tags: form.tags,
-        }),
+        body: JSON.stringify({ txHash: hash }),
       });
-      setTimeout(() => {
-        setLog((p) => [...p, "> SUBMISSION ACCEPTED. Awaiting AI consensus judging."]);
-        setDone(true);
-      }, lines.length * 500);
+
+      setLog((p) => [...p, "> SUBMISSION ACCEPTED. Awaiting AI consensus judging."]);
+      setDone(true);
     } catch (err) {
       setError((err as Error).message);
       setLog((p) => [...p, `> ERROR: ${(err as Error).message}`]);

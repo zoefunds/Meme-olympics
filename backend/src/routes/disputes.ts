@@ -3,14 +3,15 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { limit } from "../middleware/rateLimit";
-import { decryptPrivateKey } from "../lib/walletCrypto";
 import * as gl from "../services/genlayer";
-import { logger } from "../lib/logger";
 
 export const disputesRouter = Router();
 
 // POST /api/disputes — must include a public evidence URL; the contract
-// fetches it on-chain, claims are never resolved from text alone.
+// fetches it on-chain, claims are never resolved from text alone. The
+// on-chain open_dispute call is signed by the CALLER'S OWN wallet from the
+// frontend (see lib/genlayer.ts) — call POST /:id/onchain-confirm once it
+// lands.
 disputesRouter.post(
   "/",
   requireAuth,
@@ -38,43 +39,55 @@ disputesRouter.post(
       data: { submissionId, userId: req.userId!, reason, evidenceUrl },
     });
 
-    if (gl.isChainConfigured()) {
-      try {
-        const user = await prisma.user.findUnique({ where: { id: req.userId! } });
-        await gl.openDisputeOnChain(
-          decryptPrivateKey(user!.encryptedPrivateKey),
-          dispute.id,
-          submissionId,
-          reason,
-          evidenceUrl,
-          new Date().toISOString()
-        );
-        // Only mark confirmed once the chain call actually succeeds — a
-        // dispute still onchainOpened=false is what retryDisputeRegistrationSweep
-        // looks for, so leaving this unset on failure is what makes the retry
-        // sweep pick it up instead of the dispute silently going unopened.
-        await prisma.dispute.update({
-          where: { id: dispute.id },
-          data: { onchainOpened: true },
-        });
-      } catch (err) {
-        logger.error({ err: (err as Error).message }, "on-chain dispute failed; will retry");
-      }
-    }
-
     return res.status(201).json({ dispute });
   }
 );
 
-// GET /api/disputes — recent disputes (public transparency)
-disputesRouter.get("/", async (_req, res) => {
+// POST /api/disputes/:id/onchain-confirm
+disputesRouter.post(
+  "/:id/onchain-confirm",
+  requireAuth,
+  async (req: AuthedRequest, res: Response) => {
+    const dispute = await prisma.dispute.findUnique({ where: { id: req.params.id } });
+    if (!dispute || dispute.userId !== req.userId) {
+      return res.status(404).json({ error: "Dispute not found" });
+    }
+    if (!gl.isChainConfigured()) {
+      return res.status(503).json({ error: "Contract not configured yet" });
+    }
+    const onchain = await gl.readUntilFound<{ status?: string }>(
+      "get_dispute",
+      [dispute.id],
+      (v) => Boolean(v?.status)
+    );
+    if (!onchain) {
+      return res.status(409).json({ error: "Dispute not found on-chain yet" });
+    }
+    const updated = await prisma.dispute.update({
+      where: { id: dispute.id },
+      data: { onchainOpened: true },
+    });
+    return res.json({ dispute: updated });
+  }
+);
+
+// GET /api/disputes — recent disputes (public transparency), optionally
+// scoped to one submission (?submissionId=) for the meme detail page.
+disputesRouter.get("/", async (req, res) => {
+  const submissionId = typeof req.query.submissionId === "string" ? req.query.submissionId : undefined;
   const disputes = await prisma.dispute.findMany({
+    where: submissionId ? { submissionId } : undefined,
     orderBy: { createdAt: "desc" },
     take: 50,
     include: {
       submission: { select: { title: true, imageUrl: true } },
-      user: { select: { username: true } },
+      user: { select: { username: true, authAddress: true } },
     },
   });
-  return res.json({ disputes });
+  return res.json({
+    disputes: disputes.map((d) => ({
+      ...d,
+      username: d.user.username || `wallet_${d.user.authAddress.slice(2, 8)}`,
+    })),
+  });
 });
