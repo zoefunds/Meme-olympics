@@ -5,7 +5,7 @@ in real USDC on Base Sepolia — not likes, not votes, only logic.**
 
 - **Live app:** https://meme-olympics.vercel.app
 - **API:** https://meme-olympics-api-prod.fly.dev (Fly.io, 24/7, 2 machines)
-- **GenLayer Intelligent Contract (StudioNet):** `0xB943Eefa3e43E6FBf68eE14F0668D88f97eabaE4`
+- **GenLayer Intelligent Contract (StudioNet):** `0x31E458C494FDFE74e3Fdd23e46009544074333Fa`
 - **MemeOlympicsEscrow (Base Sepolia):** `0x76128b04627b80D8E556568cc7fA7cb0eaf035Fe`
 - **USDC (Base Sepolia, Circle official):** `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
 
@@ -179,6 +179,17 @@ sequenceDiagram
 - **Admin panel** — stats, manual rollover/judging triggers, dispute
   resolution, submission maintenance. Admin is granted per-wallet
   (`ADMIN_WALLETS`), auto-applied on first connect.
+- **Mobile-friendly UI** — the whole app (bottom tab bar on small screens,
+  responsive grids/tables, a header that collapses to icon-only nav for a
+  logged-in user) is designed to work cleanly on a phone, not just as a
+  scaled-down desktop layout. See [v2-update.md](v2-update.md).
+- **Wallet network prompts that actually fire** — before any GenLayer or
+  Base Sepolia transaction, the connected wallet is checked against the
+  chain that action needs and, if it's missing or wrong, walked through an
+  add-network/switch-network prompt automatically — not just wallets that
+  report the standard "chain not added" error code. See
+  [frontend/src/lib/genlayer.ts](frontend/src/lib/genlayer.ts) and
+  [frontend/src/lib/baseSepolia.ts](frontend/src/lib/baseSepolia.ts).
 
 ## Intelligent contract design notes
 
@@ -287,6 +298,17 @@ funding/claim flow. Highlights:
   workflow ([.github/workflows/uptime.yml](.github/workflows/uptime.yml))
   pinging both the API and frontend every 15 minutes with an auto-filed
   GitHub issue on failure.
+- **DB state now follows on-chain truth, not the other way round** — a
+  submission row that never actually confirmed on-chain (rejected tx,
+  closed wallet, dropped network) no longer permanently blocks that user
+  from resubmitting; stale pending rows self-heal to `failed` instead of
+  silently occupying the 1-per-arena slot forever. See
+  [v2-update.md](v2-update.md).
+- **RESYNC FROM CHAIN no longer re-fires setup writes** — the defense-in-depth
+  `set_competition_defaults` call only fires on an arena's first on-chain
+  confirm, not on every manual resync, so pressing the resync button on an
+  already-confirmed arena can no longer trigger a spurious on-chain error.
+  See [v2-update.md](v2-update.md).
 
 ## Automation (UTC)
 
@@ -316,7 +338,8 @@ frontend/
   src/lib/baseSepolia.ts            # raw EIP-1193 wallet + Base Sepolia tx helpers
   src/app/                          # Next.js 14 App Router pages, Aura Arena design system
 .github/workflows/uptime.yml       # 15-min health check with auto-filed issues
-milestone-v2.md                    # this milestone's fixes/changes, written for team review
+milestone-v2.md                    # v2 milestone changelog (judging rubric, USDC payments, wallet auth)
+v2-update.md                       # 2026-08-08 changelog: contract migration + production bug fixes
 MEMORY.md                          # living project memory
 ```
 
