@@ -215,7 +215,9 @@ sequenceDiagram
   that path but isn't needed when deploying via the Studio UI. **After any
   redeploy, the new owner must call `add_admin(<operator address>)`** or
   every operator-signed action (judging, finalizing, relaying) fails with
-  `Only admin may call this` — the exact bug this project hit twice.
+  `Only admin may call this` — the exact bug this project has now hit on
+  every single redeploy (three times), most recently on the 2026-08-08
+  contract migration; see [v2-update.md](v2-update.md).
 - `gl.message.sender_address` is the correct sender accessor on current
   GenVM.
 

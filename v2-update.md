@@ -3,7 +3,9 @@
 Changelog for everything changed today: a GenLayer contract migration (with
 a full production data reset), two production bugs found from real user
 reports and fixed at the root cause, a hardening pass on wallet
-network-switching, and a mobile-friendliness pass across the whole app.
+network-switching, a mobile-friendliness pass across the whole app, and two
+operational incidents hit and resolved while dogfooding the new contract
+right after migration.
 
 ---
 
@@ -145,6 +147,57 @@ found and fixed two real bugs:
 Verified with screenshots at 375×812 before and after, confirmed the
 desktop layout is unaffected, and both a clean TypeScript build and a
 production `next build` pass.
+
+## 7. New contract deployment needed its admin re-registered
+
+**Symptom:** right after the contract migration (section 1), the first
+real on-chain admin action — `set_competition_defaults`, fired
+automatically on an arena's first confirm (section 3's fix working as
+intended) — failed with:
+
+```
+[EXPECTED] Only admin may call this
+```
+
+**Root cause:** this is the exact "redeploy needs its admin re-added" issue
+already called out in [README.md](README.md)'s contract design notes — a
+GenLayer contract's admin list does **not** carry over across a redeploy.
+Only the wallet that deployed the new contract in GenLayer Studio is admin
+by default; the backend's own operator wallet
+(`0x4A6666C015BE347799E0B25cfE27bfd3847027BB`, from `GENLAYER_OPERATOR_PRIVATE_KEY`)
+has to be explicitly re-added on every new deployment or every
+operator-signed action fails the same way — `set_competition_defaults`,
+`close_submissions`, `evaluate_meme`, `finalize_competition`,
+`resolve_dispute`, `mark_prizes_relayed`.
+
+**Fix:** the contract owner called `add_admin("0x4A6666C015BE347799E0B25cfE27bfd3847027BB")`
+on the new contract from GenLayer Studio. Re-ran `set_competition_defaults(3, 1)`
+directly against production afterward to confirm — it went through cleanly
+(`0xd4ffff6f9710ece3749a7d9fc9180f14159dcdd785fd773a8f0d36ef0b238f80`). The
+one call that failed before the fix landed was fire-and-forget
+(`.catch(() => undefined)` in [backend/src/routes/competitions.ts](backend/src/routes/competitions.ts)) —
+it never touched the DB or blocked the arena's own confirmation, so no
+cleanup was needed beyond the retry.
+
+## 8. Arena-hosting rate limit exhausted during post-migration testing
+
+**Symptom:** `POST /api/competitions` returned `429 Too Many Requests` /
+"Too many requests. Please slow down." while trying to host a new test
+arena after the migration.
+
+**Root cause:** not GenLayer Studio's 30 req/min chain-level limit (that's
+handled separately, client-side, with retry/backoff in
+[frontend/src/lib/genlayer.ts](frontend/src/lib/genlayer.ts)'s `withBackoff`)
+— this was the backend's own anti-spam cap of **3 arena-hosts per day per
+user** ([backend/src/routes/competitions.ts](backend/src/routes/competitions.ts)),
+exhausted by repeated hosting attempts while testing the migration end to
+end.
+
+**Fix:** cleared the exhausted `rl:create-comp:*` buckets directly in
+production Redis (Upstash) to unblock immediately. The 3/day cap itself
+was left as-is — it's an intentional anti-spam policy, not a bug — but is
+worth revisiting if admin-wallet testing needs a higher (or exempted)
+limit going forward.
 
 ---
 
