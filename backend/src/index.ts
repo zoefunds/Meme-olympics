@@ -12,7 +12,7 @@ import { disputesRouter } from "./routes/disputes";
 import { rewardsRouter } from "./routes/rewards";
 import { adminRouter } from "./routes/admin";
 import { uploadsRouter, imagesRouter } from "./routes/uploads";
-import { startSchedulers, runWeeklyRollover, armPendingCloseTimers } from "./jobs/weekly";
+import { startSchedulers, armPendingCloseTimers } from "./jobs/weekly";
 
 const app = express();
 
@@ -85,10 +85,8 @@ app.listen(config.port, "0.0.0.0", () => {
   startSchedulers();
   void (async () => {
     try {
-      // Ensure a competition exists on boot (idempotent), then verify and
-      // arm timers. Keep these sequential so contract-switch reconciliation
-      // cannot race against timer arming for the same open competition.
-      await runWeeklyRollover();
+      // Weekly auto-rollover is disabled — every arena is user/admin
+      // initiated now, none are auto-created, including on boot.
       await armPendingCloseTimers();
     } catch (e) {
       logger.error({ err: (e as Error).message }, "boot lifecycle setup failed");

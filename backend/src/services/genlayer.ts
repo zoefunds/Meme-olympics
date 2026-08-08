@@ -145,6 +145,28 @@ export async function readContract(functionName: string, args: any[] = []) {
   return toPlain(result);
 }
 
+/** Retries only on rate-limit-shaped RPC errors, with exponential backoff —
+ * keeps sequential operator writes (e.g. create_competition then
+ * open_competition) under the network's 30 req/min ceiling. Any other
+ * error rethrows immediately. */
+async function withBackoff<T>(
+  fn: () => Promise<T>,
+  retries = 4,
+  baseDelayMs = 1500
+): Promise<T> {
+  let attempt = 0;
+  for (;;) {
+    try {
+      return await fn();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (attempt >= retries || !/rate.?limit/i.test(message)) throw err;
+      await new Promise((r) => setTimeout(r, baseDelayMs * 2 ** attempt));
+      attempt++;
+    }
+  }
+}
+
 async function writeAs(
   client: GLClient,
   functionName: string,
@@ -152,12 +174,14 @@ async function writeAs(
   value: bigint = BigInt(0),
   waitForFinal: boolean = false
 ): Promise<string> {
-  const hash = await client.writeContract({
-    address: contractAddress(),
-    functionName,
-    args,
-    value,
-  });
+  const hash = await withBackoff(() =>
+    client.writeContract({
+      address: contractAddress(),
+      functionName,
+      args,
+      value,
+    })
+  );
   logger.info({ functionName, hash, value: value.toString() }, "genlayer tx sent");
   await waitAccepted(client, hash as string);
   if (waitForFinal) await waitFinalized(client, hash as string);
@@ -253,6 +277,20 @@ export async function markPrizesRelayedOnChain(
  * the operator is the creator in that case, so it's entitled to open it. */
 export async function openCompetitionOnChain(id: string): Promise<string> {
   return writeAs(await getOperatorClient(), "open_competition", [id]);
+}
+
+/** Defense-in-depth for the 1-submission-per-user cap already enforced in
+ * the backend (submissions.ts): sets the contract's own per-user ceiling to
+ * match, so the on-chain rule agrees with the DB rule. winnerCount stays
+ * whatever the contract's existing default is unless overridden. */
+export async function setCompetitionDefaultsOnChain(
+  winnerCount: number,
+  maxSubmissionsPerUser: number
+): Promise<string> {
+  return writeAs(await getOperatorClient(), "set_competition_defaults", [
+    winnerCount,
+    maxSubmissionsPerUser,
+  ]);
 }
 
 export async function closeSubmissionsOnChain(id: string): Promise<string> {

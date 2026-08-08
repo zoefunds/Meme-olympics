@@ -13,6 +13,7 @@ import { Router, Response } from "express";
 import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { limit } from "../middleware/rateLimit";
+import { config } from "../lib/config";
 
 export const uploadsRouter = Router();
 export const imagesRouter = Router();
@@ -47,8 +48,10 @@ uploadsRouter.post(
     const image = await prisma.image.create({
       data: { userId: req.userId!, mime, data },
     });
-    const base = `${req.protocol}://${req.get("host")}`;
-    return res.status(201).json({ id: image.id, url: `${base}/i/${image.id}` });
+    // Built from stable config, not req.protocol/req.get("host") — those
+    // can report the wrong scheme/host behind Fly's proxy, producing a URL
+    // that later 404s and shows as a "missing image" once judged.
+    return res.status(201).json({ id: image.id, url: `${config.publicUrl}/i/${image.id}` });
   }
 );
 

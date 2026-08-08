@@ -12,7 +12,7 @@ import { studionet } from "genlayer-js/chains";
 import type { GenLayerClient } from "genlayer-js/types";
 
 export const CONTRACT_ADDRESS = (process.env.NEXT_PUBLIC_GENLAYER_CONTRACT_ADDRESS ||
-  "0x0d5a3C57F2382148683d5d09821BA01B38eF8Eb1") as `0x${string}`;
+  "0xf363797335d66E6Af00502f43EDE872C5Fe19bCb") as `0x${string}`;
 
 const STUDIONET_CHAIN_ID_HEX = `0x${studionet.id.toString(16)}`;
 
@@ -56,6 +56,28 @@ export async function ensureStudioNetwork(): Promise<void> {
   }
 }
 
+/** Retries only on rate-limit-shaped RPC errors (e.g. viem's
+ * "Request is being rate limited" from eth_sendRawTransaction), with
+ * exponential backoff. Any other error rethrows immediately. Keeps
+ * sequential on-chain writes (create_competition -> open_competition)
+ * under the network's 30 req/min ceiling. */
+async function withBackoff<T>(
+  fn: () => Promise<T>,
+  { retries = 4, baseDelayMs = 1500 }: { retries?: number; baseDelayMs?: number } = {}
+): Promise<T> {
+  let attempt = 0;
+  for (;;) {
+    try {
+      return await fn();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (attempt >= retries || !/rate.?limit/i.test(message)) throw err;
+      await new Promise((r) => setTimeout(r, baseDelayMs * 2 ** attempt));
+      attempt++;
+    }
+  }
+}
+
 /** Read-only client — always works, wallet or not. */
 export const readClient = createClient({ chain: studionet });
 
@@ -64,7 +86,16 @@ export function getGenLayerClient(address: string): GenLayerClient<typeof studio
 }
 
 /** Submits and waits for ACCEPTED. Re-asserts the network on every write:
- * the user may have switched chains in their wallet after connecting. */
+ * the user may have switched chains in their wallet after connecting.
+ *
+ * The post-write receipt poll below calls studio.genlayer.com/api directly
+ * from the browser via fetch() — that endpoint sends no CORS headers for
+ * browser origins, so this call ALWAYS fails cross-origin, every time, not
+ * intermittently. It's non-fatal here: the write itself (signed and sent
+ * through the wallet's own transport, not fetch) already succeeded once we
+ * have `hash`. Every caller of genlayerWrite follows up with a backend
+ * *_confirm route that re-checks the chain server-side (no CORS involved
+ * there), so that's the real source of truth — not this browser-side poll. */
 export async function genlayerWrite(
   address: string,
   functionName: string,
@@ -73,18 +104,26 @@ export async function genlayerWrite(
 ): Promise<{ hash: string; receipt: unknown }> {
   await ensureStudioNetwork();
   const client = getGenLayerClient(address);
-  const hash = (await client.writeContract({
-    address: CONTRACT_ADDRESS,
-    functionName,
-    // genlayer-js encodes primitives/arrays/objects as GenLayer calldata
-    args: args as never[],
-    value: value ?? 0n,
-  })) as string;
-  const receipt = await client.waitForTransactionReceipt({
-    hash: hash as never,
-    status: "ACCEPTED" as never,
-    interval: 3000,
-    retries: 60,
-  });
+  const hash = (await withBackoff(() =>
+    client.writeContract({
+      address: CONTRACT_ADDRESS,
+      functionName,
+      // genlayer-js encodes primitives/arrays/objects as GenLayer calldata
+      args: args as never[],
+      value: value ?? 0n,
+    })
+  )) as string;
+  let receipt: unknown = null;
+  try {
+    receipt = await client.waitForTransactionReceipt({
+      hash: hash as never,
+      status: "ACCEPTED" as never,
+      interval: 3000,
+      retries: 60,
+    });
+  } catch {
+    // Expected CORS/fetch failure from the browser — see doc comment above.
+    // The tx already landed; the caller's backend confirm route verifies it.
+  }
   return { hash, receipt };
 }

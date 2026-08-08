@@ -2,7 +2,9 @@
  * Weekly competition lifecycle + judging worker.
  *
  * Schedule (UTC):
- *  - Monday 00:05 — rollover: open a new official weekly arena
+ *  - Weekly auto-rollover is DISABLED — every arena is now user/admin
+ *    initiated only (see `runWeeklyRollover`, kept for the manual
+ *    POST /api/admin/rollover trigger but no longer cron-scheduled).
  *  - exact-time — each competition gets its own setTimeout (armed at
  *    creation, and re-armed for all open arenas on process startup) that
  *    fires its close the instant endsAt hits, independent of any other
@@ -644,12 +646,10 @@ async function runRelayTick() {
 }
 
 export function startSchedulers() {
-  // Weekly rollover — Mondays 00:05 UTC (opens the new official arena only).
-  // Locked too: without it, every machine would try to create the same
-  // week's arena at once.
-  cron.schedule("5 0 * * 1", () => void withLock("weekly-rollover", 5 * 60_000, runWeeklyRollover), {
-    timezone: "UTC",
-  });
+  // Weekly auto-rollover is DISABLED: every arena is now user/admin
+  // initiated, none are auto-created. `runWeeklyRollover` is kept as a
+  // function (POST /api/admin/rollover still calls it manually if ever
+  // needed) but is no longer registered on a cron schedule.
   // Close sweep — every minute, always runs: flips any expired 'open'
   // competition to 'judging' immediately, regardless of judging load.
   cron.schedule("* * * * *", () => void runCloseTick(), { timezone: "UTC" });
@@ -660,6 +660,6 @@ export function startSchedulers() {
   // whose Base Sepolia relay didn't land inline at finalize time.
   cron.schedule("*/2 * * * *", () => void runRelayTick(), { timezone: "UTC" });
   logger.info(
-    "schedulers started (weekly rollover, per-minute close + judge sweeps, prize relay sweep)"
+    "schedulers started (per-minute close + judge sweeps, prize relay sweep; weekly auto-rollover disabled)"
   );
 }

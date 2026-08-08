@@ -27,6 +27,7 @@ function LeaderboardInner() {
   const [comps, setComps] = useState<Comp[]>([]);
   const [selected, setSelected] = useState<string>("");
   const [entries, setEntries] = useState<Entry[]>([]);
+  const [disqualified, setDisqualified] = useState<Entry[]>([]);
 
   useEffect(() => {
     api<{ competitions: Comp[] }>("/api/competitions").then((r) => {
@@ -43,9 +44,17 @@ function LeaderboardInner() {
   useEffect(() => {
     if (!selected) return;
     const load = () =>
-      api<{ leaderboard: Entry[] }>(`/api/competitions/${selected}/leaderboard`)
-        .then((r) => setEntries(r.leaderboard))
-        .catch(() => setEntries([]));
+      api<{ leaderboard: Entry[]; disqualified?: Entry[] }>(
+        `/api/competitions/${selected}/leaderboard`
+      )
+        .then((r) => {
+          setEntries(r.leaderboard);
+          setDisqualified(r.disqualified || []);
+        })
+        .catch(() => {
+          setEntries([]);
+          setDisqualified([]);
+        });
     load();
     // Scores land one meme at a time as judging progresses — poll so
     // rankings update live instead of needing a manual reload.
@@ -200,6 +209,56 @@ function LeaderboardInner() {
             </table>
           </div>
         </GlassCard>
+      )}
+
+      {disqualified.length > 0 && (
+        <section className="mt-8">
+          <GlassCard className="rounded-2xl border-danger/20">
+            <div className="p-6 border-b border-white/10 bg-danger/5">
+              <h3 className="font-display font-semibold text-xl text-danger">
+                Disqualified Memes
+              </h3>
+              <p className="font-mono text-xs text-on-variant mt-1">
+                Excluded from ranking after judging — shown here for
+                transparency.
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="font-mono text-xs uppercase text-on-variant border-b border-white/5">
+                    <th className="px-6 py-4 font-normal">Meme</th>
+                    <th className="px-6 py-4 font-normal">Creator</th>
+                    <th className="px-6 py-4 font-normal">Verdict</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {disqualified.map((e) => (
+                    <tr
+                      key={e.submissionId}
+                      onClick={() => router.push(`/meme/${e.submissionId}`)}
+                      className="border-b border-white/5 hover:bg-white/5 transition-all cursor-pointer opacity-70"
+                    >
+                      <td className="px-6 py-5">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded bg-surface-high overflow-hidden">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img loading="lazy" src={e.imageUrl} alt="" className="w-full h-full object-cover" />
+                          </div>
+                          <span className="font-medium">{e.title}</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-5 text-on-variant">@{e.username}</td>
+                      <td className="px-6 py-5 font-mono text-xs uppercase text-danger">
+                        {e.plagiarismVerdict || "disqualified"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </GlassCard>
+        </section>
       )}
     </main>
   );

@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma";
 import { requireAuth, requireAdmin, AuthedRequest } from "../middleware/auth";
 import * as gl from "../services/genlayer";
 import { runWeeklyRollover, runJudgingSweep, scheduleClose } from "../jobs/weekly";
+import { logger } from "../lib/logger";
 
 export const adminRouter = Router();
 
@@ -50,6 +51,27 @@ adminRouter.post("/competitions", async (req: AuthedRequest, res: Response) => {
     return res.status(400).json({ error: parsed.error.issues[0].message });
   }
   const d = parsed.data;
+
+  const startsAt = new Date(d.startsAt);
+  const endsAt = new Date(d.endsAt);
+  if (endsAt <= startsAt) {
+    return res.status(400).json({ error: "End date must be after start date" });
+  }
+  if (endsAt.getTime() > startsAt.getTime() + 7 * 24 * 60 * 60 * 1000) {
+    return res.status(400).json({ error: "End date must be within 1 week of the start date" });
+  }
+
+  if (d.open) {
+    const activeComp = await prisma.competition.findFirst({
+      where: { status: { in: ["created", "open", "judging"] } },
+    });
+    if (activeComp) {
+      return res.status(409).json({
+        error: `Another arena ("${activeComp.title}") is still active — wait for it to finalize before opening a new one.`,
+      });
+    }
+  }
+
   const comp = await prisma.competition.create({
     data: {
       id: d.id,
@@ -64,6 +86,12 @@ adminRouter.post("/competitions", async (req: AuthedRequest, res: Response) => {
   if (gl.isChainConfigured()) {
     try {
       await gl.createCompetitionOnChain(d.id, d.title, d.theme, d.startsAt, d.endsAt);
+      // Defense-in-depth: keep the contract's own per-user cap (currently a
+      // mutable global default, not per-competition) aligned with the
+      // backend's 1-submission-per-user rule.
+      await gl.setCompetitionDefaultsOnChain(3, 1).catch((err) =>
+        logger.warn({ err }, "set_competition_defaults failed (non-fatal)")
+      );
       if (d.open) await gl.openCompetitionOnChain(d.id);
       await prisma.competition.update({
         where: { id: d.id },

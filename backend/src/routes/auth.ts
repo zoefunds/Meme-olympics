@@ -104,10 +104,21 @@ authRouter.post(
     }
 
     let user = await prisma.user.findUnique({ where: { authAddress: address } });
+    // Re-derived on EVERY login, not just first registration — adding or
+    // removing a wallet from ADMIN_WALLETS now takes effect the next time
+    // that wallet logs in, instead of requiring a manual DB promotion.
+    const shouldBeAdmin = config.adminWallets.includes(address.toLowerCase());
     if (!user) {
-      const role = config.adminWallets.includes(address.toLowerCase()) ? "admin" : "user";
-      user = await prisma.user.create({ data: { authAddress: address, role } });
+      user = await prisma.user.create({
+        data: { authAddress: address, role: shouldBeAdmin ? "admin" : "user" },
+      });
       logger.info({ userId: user.id, authAddress: address }, "wallet account created");
+    } else {
+      const role = shouldBeAdmin ? "admin" : "user";
+      if (user.role !== role) {
+        user = await prisma.user.update({ where: { id: user.id }, data: { role } });
+        logger.info({ userId: user.id, authAddress: address, role }, "wallet role synced from ADMIN_WALLETS");
+      }
     }
 
     return res.json({ token: signToken(user.id, user.role), user: publicUser(user) });

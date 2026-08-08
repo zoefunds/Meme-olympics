@@ -16,6 +16,15 @@ export const config = {
   // 32-byte hex key for AES-256-GCM wallet encryption
   walletEncryptionKey: required("WALLET_ENCRYPTION_KEY"),
   frontendUrl: process.env.FRONTEND_URL || "http://localhost:3000",
+  // Canonical, stable host used to build absolute image URLs (e.g.
+  // https://meme-olympics-api.fly.dev). Must NOT be derived from
+  // req.protocol/req.get("host") at request time — behind Fly's proxy that
+  // can report the wrong scheme/host, producing a URL that later 404s and
+  // shows as a "missing image" on judged results.
+  publicUrl: (process.env.PUBLIC_URL || `http://localhost:${process.env.PORT || "8080"}`).replace(
+    /\/+$/,
+    ""
+  ),
   genlayer: {
     rpcUrl: process.env.GENLAYER_RPC_URL || "https://studio.genlayer.com/api",
     contractAddress: process.env.GENLAYER_CONTRACT_ADDRESS || "",

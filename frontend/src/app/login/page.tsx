@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { api, setSession } from "@/lib/api";
 import { connectWallet, signMessage, hasInjectedWallet } from "@/lib/baseSepolia";
 import { GlassCard, PrestigeButton, MonoLabel } from "@/components/ui";
+import { UsernamePromptModal } from "@/components/UsernamePromptModal";
 
 export default function Login() {
   const router = useRouter();
@@ -11,6 +12,7 @@ export default function Login() {
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState("");
   const [hasWallet, setHasWallet] = useState(true); // assume yes until checked, avoids hydration flash of the warning
+  const [needsUsername, setNeedsUsername] = useState(false);
 
   useEffect(() => {
     setHasWallet(hasInjectedWallet());
@@ -38,13 +40,28 @@ export default function Login() {
         { method: "POST", body: JSON.stringify({ address, signature }) }
       );
       setSession(res.token, res.user);
-      router.push("/dashboard");
+      if (!(res.user as { username: string | null }).username) {
+        setNeedsUsername(true);
+      } else {
+        router.push("/dashboard");
+      }
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setBusy(false);
       setStep("");
     }
+  }
+
+  if (needsUsername) {
+    return (
+      <UsernamePromptModal
+        onDone={() => {
+          setNeedsUsername(false);
+          router.push("/dashboard");
+        }}
+      />
+    );
   }
 
   return (

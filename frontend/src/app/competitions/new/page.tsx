@@ -14,8 +14,18 @@ export default function NewCompetition() {
   const [status, setStatus] = useState("");
 
   useEffect(() => {
-    if (!getUser()) router.push("/login");
+    const user = getUser();
+    if (!user) {
+      router.push("/login");
+    } else if (user.role !== "admin") {
+      router.push("/dashboard");
+    }
   }, [router]);
+
+  // Max allowed deadline: 1 week from now, matching the backend cap.
+  const maxEndsAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 16);
 
   async function depositPrize(address: string, competitionId: string, amountUsdc: number) {
     setStatus("Fetching deposit transactions…");
@@ -87,16 +97,18 @@ export default function NewCompetition() {
     <main className="px-4 md:px-12 py-12 max-w-2xl mx-auto">
       <header className="mb-10">
         <MonoLabel className="text-gold-dim tracking-[0.2em] block mb-2">
-          Open to all competitors
+          Admin only
         </MonoLabel>
         <h1 className="font-display font-bold text-4xl md:text-5xl text-cream">
           HOST AN ARENA
         </h1>
         <p className="text-on-variant mt-4">
-          Anyone can create a meme competition. You set the theme, deadline,
-          and — optionally — fund a real USDC prize pool on Base Sepolia.
-          GenLayer validator consensus does the judging; winners self-claim
-          their USDC directly from the escrow contract with their own wallet.
+          Only one arena can be active platform-wide at a time — the current
+          one must be closed, judged, and finalized before a new one can
+          open. You set the theme, deadline (max 1 week), and — optionally —
+          fund a real USDC prize pool on Base Sepolia. GenLayer validator
+          consensus does the judging; winners self-claim their USDC directly
+          from the escrow contract with their own wallet.
         </p>
       </header>
       <GlassCard className="p-8 md:p-12" scan>
@@ -126,9 +138,13 @@ export default function NewCompetition() {
               type="datetime-local"
               className="terminal-input font-mono text-sm [color-scheme:dark]"
               value={form.endsAt}
+              max={maxEndsAt}
               onChange={(e) => setForm({ ...form, endsAt: e.target.value })}
               required
             />
+            <p className="font-mono text-[10px] text-on-variant">
+              Max deadline is 1 week from now.
+            </p>
           </div>
           <div className="flex flex-col gap-2">
             <MonoLabel>Prize pool — USDC on Base Sepolia (optional)</MonoLabel>
@@ -145,8 +161,8 @@ export default function NewCompetition() {
               After creating the arena, you&apos;ll be asked to approve and
               deposit this amount of USDC from your own wallet (MetaMask etc.)
               on Base Sepolia — a separate chain from GenLayer, where judging
-              happens. Leave blank/0 for a ranking-only arena. Anyone
-              (including you) can add more later.
+              happens. Leave blank/0 for a ranking-only arena. Only you, as
+              the creator, can add more later.
             </p>
           </div>
           {error && <p className="text-danger font-mono text-xs">{error}</p>}

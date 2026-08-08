@@ -106,6 +106,8 @@ export default function ArenaDetail() {
   const [fundAmount, setFundAmount] = useState("");
   const [fundBusy, setFundBusy] = useState(false);
   const [fundStatus, setFundStatus] = useState("");
+  const [resyncBusy, setResyncBusy] = useState(false);
+  const [resyncStatus, setResyncStatus] = useState("");
   const countdown = useCountdown(comp?.endsAt, comp?.status === "open");
 
   function load() {
@@ -125,6 +127,31 @@ export default function ArenaDetail() {
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params?.id]);
+
+  // Re-runs the *-confirm sync against whatever the chain actually shows
+  // right now. Safe to press any time — both routes re-read GenLayer/the
+  // escrow contract server-side rather than trusting anything client-sent,
+  // so this can't desync state further, only fix it. Exists because a
+  // wallet-signed write can land on-chain while its immediate confirm call
+  // gets interrupted (closed tab, timed-out prompt, flaky network) and the
+  // DB never finds out.
+  async function resync() {
+    if (!comp) return;
+    setResyncBusy(true);
+    setResyncStatus("");
+    try {
+      setResyncStatus("Checking on-chain status…");
+      await api(`/api/competitions/${comp.id}/onchain-confirm`, { method: "POST" }).catch(() => undefined);
+      setResyncStatus("Checking prize pool…");
+      await api(`/api/competitions/${comp.id}/fund-confirm`, { method: "POST" }).catch(() => undefined);
+      setResyncStatus("✓ Synced with chain.");
+      load();
+    } catch (err) {
+      setResyncStatus((err as Error).message);
+    } finally {
+      setResyncBusy(false);
+    }
+  }
 
   async function fundArena(e: React.FormEvent) {
     e.preventDefault();
@@ -223,13 +250,13 @@ export default function ArenaDetail() {
         </div>
       </GlassCard>
 
-      {getUser() && ["open", "judging"].includes(comp.status) && (
+      {getUser()?.id === comp.createdByUserId && ["open", "judging"].includes(comp.status) && (
         <GlassCard className="p-6">
           <MonoLabel className="block mb-3">Add to the prize pool</MonoLabel>
           <p className="text-on-variant text-xs mb-4">
-            Anyone can top up this arena&apos;s USDC prize pool — the host,
-            a sponsor, or the community. You&apos;ll be asked to confirm on
-            GenLayer, then approve + deposit the USDC on Base Sepolia.
+            Only you, as this arena&apos;s creator, can top up its USDC prize
+            pool. You&apos;ll be asked to confirm on GenLayer, then approve +
+            deposit the USDC on Base Sepolia.
           </p>
           <form onSubmit={fundArena} className="flex items-end gap-3">
             <div className="flex-1 max-w-xs">
@@ -264,6 +291,23 @@ export default function ArenaDetail() {
           </GlassCard>
         ))}
       </div>
+
+      {getUser()?.id === comp.createdByUserId && (
+        <div className="flex flex-col items-start gap-2">
+          <GhostButton onClick={resync} disabled={resyncBusy}>
+            {resyncBusy ? "SYNCING…" : "↻ RESYNC FROM CHAIN"}
+          </GhostButton>
+          <p className="font-mono text-[10px] text-on-variant">
+            If a wallet transaction succeeded but this page still shows
+            &quot;pending&quot; or the wrong prize amount, press this — it
+            re-checks GenLayer and the escrow contract directly. Safe to
+            press any time.
+          </p>
+          {resyncStatus && (
+            <p className="font-mono text-xs text-cyan-soft">{resyncStatus}</p>
+          )}
+        </div>
+      )}
 
       {comp.winners.length > 0 && (
         <section>

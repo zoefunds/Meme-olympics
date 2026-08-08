@@ -51,6 +51,13 @@ submissionsRouter.post(
         .json({ error: "You already submitted to this arena" });
     }
 
+    const total = await prisma.submission.count({
+      where: { competitionId: comp.id },
+    });
+    if (total >= 100) {
+      return res.status(400).json({ error: "This arena has reached its 100-submission cap" });
+    }
+
     const duplicate = await prisma.submission.findFirst({
       where: { imageUrl: data.imageUrl },
     });
