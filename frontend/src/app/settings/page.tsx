@@ -97,7 +97,7 @@ export default function Settings() {
       <GlassCard className="p-8" scan>
         <h2 className="font-display font-semibold text-xl mb-4">USDC Balance</h2>
         {balances ? (
-          <div className="grid grid-cols-3 gap-4 font-mono">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 font-mono">
             <div className="bg-black/30 rounded-lg p-4 border border-white/5">
               <MonoLabel className="text-on-variant text-[10px] block mb-1">
                 WALLET (Base Sepolia)

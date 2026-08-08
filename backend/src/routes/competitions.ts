@@ -177,8 +177,14 @@ competitionsRouter.post(
       data: { onchainCreated: true },
     });
     // Defense-in-depth: keep the contract's own per-user submission cap
-    // aligned with the backend's 1-submission-per-user rule.
-    gl.setCompetitionDefaultsOnChain(3, 1).catch(() => undefined);
+    // aligned with the backend's 1-submission-per-user rule. Only needed
+    // the first time this arena confirms — this route is also what
+    // "RESYNC FROM CHAIN" calls, and re-sending this write on every resync
+    // of an already-confirmed arena serves no purpose and can error
+    // on-chain, so it must not fire on repeat confirms.
+    if (!comp.onchainCreated) {
+      gl.setCompetitionDefaultsOnChain(3, 1).catch(() => undefined);
+    }
     scheduleClose(comp.id, comp.endsAt);
     return res.json({ competition: updated });
   }

@@ -26,33 +26,65 @@ function getProvider(): EthereumProvider {
   return eth;
 }
 
+async function currentChainId(eth: EthereumProvider): Promise<string> {
+  return ((await eth.request({ method: "eth_chainId" })) as string).toLowerCase();
+}
+
+async function addStudioNetwork(eth: EthereumProvider): Promise<void> {
+  await eth.request({
+    method: "wallet_addEthereumChain",
+    params: [
+      {
+        chainId: STUDIONET_CHAIN_ID_HEX,
+        chainName: studionet.name,
+        nativeCurrency: studionet.nativeCurrency,
+        rpcUrls: studionet.rpcUrls.default.http,
+        blockExplorerUrls: studionet.blockExplorers?.default
+          ? [studionet.blockExplorers.default.url]
+          : undefined,
+      },
+    ],
+  });
+}
+
 /** Force the injected wallet onto GenLayer StudioNet before a write —
  * without this, MetaMask signs on whatever chain it currently has selected,
- * which "succeeds" in the wallet's eyes but never reaches this contract. */
+ * which "succeeds" in the wallet's eyes but never reaches this contract.
+ *
+ * Not every wallet reports "chain not added" as EIP-3085's code 4902 —
+ * some wrap it in a generic RPC error, others just no-op the switch
+ * silently instead of throwing. Relying on the error shape alone means the
+ * add-network popup never fires for those wallets (seen in the field: a
+ * fresh wallet stayed on its previous chain with no prompt at all). So
+ * after attempting the switch we always re-read the wallet's actual active
+ * chain and, if it still doesn't match, add the network explicitly and
+ * retry the switch — regardless of whether the first attempt threw. */
 export async function ensureStudioNetwork(): Promise<void> {
   const eth = getProvider();
+  if ((await currentChainId(eth)) === STUDIONET_CHAIN_ID_HEX) return;
+
   try {
     await eth.request({
       method: "wallet_switchEthereumChain",
       params: [{ chainId: STUDIONET_CHAIN_ID_HEX }],
     });
-  } catch (err) {
-    const code = (err as { code?: number })?.code;
-    if (code !== 4902) throw err;
-    await eth.request({
-      method: "wallet_addEthereumChain",
-      params: [
-        {
-          chainId: STUDIONET_CHAIN_ID_HEX,
-          chainName: studionet.name,
-          nativeCurrency: studionet.nativeCurrency,
-          rpcUrls: studionet.rpcUrls.default.http,
-          blockExplorerUrls: studionet.blockExplorers?.default
-            ? [studionet.blockExplorers.default.url]
-            : undefined,
-        },
-      ],
-    });
+  } catch {
+    // Any failure here (unrecognized chain code 4902, a differently-coded
+    // RPC error, etc.) is handled the same way below: try adding it.
+  }
+
+  if ((await currentChainId(eth)) === STUDIONET_CHAIN_ID_HEX) return;
+
+  await addStudioNetwork(eth);
+  await eth.request({
+    method: "wallet_switchEthereumChain",
+    params: [{ chainId: STUDIONET_CHAIN_ID_HEX }],
+  });
+
+  if ((await currentChainId(eth)) !== STUDIONET_CHAIN_ID_HEX) {
+    throw new Error(
+      "Please switch your wallet to the GenLayer Studio network to continue."
+    );
   }
 }
 

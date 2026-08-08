@@ -55,31 +55,56 @@ export async function signMessage(address: string, message: string): Promise<str
   return signature;
 }
 
+async function currentChainId(eth: Eip1193Provider): Promise<string> {
+  return ((await eth.request({ method: "eth_chainId" })) as string).toLowerCase();
+}
+
+async function addBaseSepolia(eth: Eip1193Provider): Promise<void> {
+  await eth.request({
+    method: "wallet_addEthereumChain",
+    params: [
+      {
+        chainId: BASE_SEPOLIA_CHAIN_ID_HEX,
+        chainName: "Base Sepolia",
+        nativeCurrency: { name: "Sepolia Ether", symbol: "ETH", decimals: 18 },
+        rpcUrls: ["https://sepolia.base.org"],
+        blockExplorerUrls: ["https://sepolia.basescan.org"],
+      },
+    ],
+  });
+}
+
+/** Not every wallet reports "chain not added" as EIP-3085's code 4902 —
+ * some wrap it in a generic RPC error, others just no-op the switch
+ * silently instead of throwing. Relying on the error shape alone means the
+ * add-network popup never fires for those wallets (seen in the field: a
+ * fresh wallet stayed on its previous chain with no prompt at all). So
+ * after attempting the switch we always re-read the wallet's actual active
+ * chain and, if it still doesn't match, add the network explicitly and
+ * retry the switch — regardless of whether the first attempt threw. */
 export async function ensureBaseSepolia(): Promise<void> {
   const eth = getProvider();
+  if ((await currentChainId(eth)) === BASE_SEPOLIA_CHAIN_ID_HEX) return;
+
   try {
     await eth.request({
       method: "wallet_switchEthereumChain",
       params: [{ chainId: BASE_SEPOLIA_CHAIN_ID_HEX }],
     });
-  } catch (err) {
-    // 4902 = chain not added yet
-    if ((err as { code?: number }).code === 4902) {
-      await eth.request({
-        method: "wallet_addEthereumChain",
-        params: [
-          {
-            chainId: BASE_SEPOLIA_CHAIN_ID_HEX,
-            chainName: "Base Sepolia",
-            nativeCurrency: { name: "Sepolia Ether", symbol: "ETH", decimals: 18 },
-            rpcUrls: ["https://sepolia.base.org"],
-            blockExplorerUrls: ["https://sepolia.basescan.org"],
-          },
-        ],
-      });
-    } else {
-      throw err;
-    }
+  } catch {
+    // Handled uniformly below: try adding it regardless of error shape.
+  }
+
+  if ((await currentChainId(eth)) === BASE_SEPOLIA_CHAIN_ID_HEX) return;
+
+  await addBaseSepolia(eth);
+  await eth.request({
+    method: "wallet_switchEthereumChain",
+    params: [{ chainId: BASE_SEPOLIA_CHAIN_ID_HEX }],
+  });
+
+  if ((await currentChainId(eth)) !== BASE_SEPOLIA_CHAIN_ID_HEX) {
+    throw new Error("Please switch your wallet to the Base Sepolia network to continue.");
   }
 }
 

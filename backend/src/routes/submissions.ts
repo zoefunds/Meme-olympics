@@ -42,8 +42,29 @@ submissionsRouter.post(
       return res.status(400).json({ error: "Competition is not open" });
     }
 
+    // A "pending" row that never confirmed on-chain (tx rejected, wallet
+    // closed, network drop) must not permanently block resubmission — the
+    // DB should reflect what's actually finalized on-chain, not the other
+    // way round. Self-heal any of the user's own stale pending rows for
+    // this arena (>10 min old — well past normal confirm time) to "failed"
+    // before counting, rather than waiting on the judging sweep (which only
+    // runs once the arena closes).
+    await prisma.submission.updateMany({
+      where: {
+        competitionId: comp.id,
+        userId: req.userId!,
+        status: "pending",
+        createdAt: { lt: new Date(Date.now() - 10 * 60 * 1000) },
+      },
+      data: { status: "failed" },
+    });
+
     const mine = await prisma.submission.count({
-      where: { competitionId: comp.id, userId: req.userId! },
+      where: {
+        competitionId: comp.id,
+        userId: req.userId!,
+        status: { notIn: ["failed"] },
+      },
     });
     if (mine >= 1) {
       return res

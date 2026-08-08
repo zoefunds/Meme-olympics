@@ -23,9 +23,14 @@ export function TopNav() {
   return (
     <>
       <header className="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-4 md:px-12 h-20 bg-surface/80 backdrop-blur-md border-b border-white/10 shadow-[0_0_15px_rgba(0,219,231,0.1)]">
-        <div className="flex items-center gap-8">
-          <Link href="/">
-            <Logo />
+        <div className="flex items-center gap-8 min-w-0">
+          <Link href="/" className="shrink-0">
+            <span className="md:hidden">
+              <Logo compact />
+            </span>
+            <span className="hidden md:inline-flex">
+              <Logo />
+            </span>
           </Link>
           <nav className="hidden md:flex gap-6 items-center">
             {links.map((l) => (
@@ -43,7 +48,7 @@ export function TopNav() {
             ))}
           </nav>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           {user ? (
             <>
               <Link
@@ -54,16 +59,16 @@ export function TopNav() {
               </Link>
               <Link
                 href="/dashboard"
-                className="font-mono text-xs text-cyan-soft hover:text-cyan transition-colors"
+                className="hidden sm:inline-block font-mono text-xs text-cyan-soft hover:text-cyan transition-colors truncate max-w-[140px]"
               >
                 {user.username ? `@${user.username}` : shortAddress(user.authAddress)}
               </Link>
               {user.role === "admin" && (
-                <Link href="/admin" className="font-mono text-xs text-purple-soft">
+                <Link href="/admin" className="font-mono text-[11px] sm:text-xs text-purple-soft shrink-0">
                   ADMIN
                 </Link>
               )}
-              <Link href="/settings" className="text-on-variant hover:text-on-surface text-sm">
+              <Link href="/settings" className="text-on-variant hover:text-on-surface text-sm shrink-0">
                 ⚙
               </Link>
               <button
@@ -72,7 +77,7 @@ export function TopNav() {
                   setUser(null);
                   router.push("/");
                 }}
-                className="text-on-variant hover:text-danger font-mono text-xs uppercase"
+                className="text-on-variant hover:text-danger font-mono text-[11px] sm:text-xs uppercase shrink-0"
               >
                 Exit
               </button>
