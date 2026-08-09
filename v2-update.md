@@ -315,3 +315,17 @@ address>)` read before declaring the migration done. This deployment's
 operator wallet was already admin — no fix needed, unlike the previous two
 migrations. Worth checking `is_admin` as a standard step on every future
 contract migration, before it has a chance to block anything.
+
+## 12. `INVALID_IMAGE` auto-disqualify: window → attempt count
+
+Section 10's fix waited 15 minutes of retries before auto-disqualifying a
+submission stuck on `INVALID_IMAGE`. Feedback: since the judging sweep
+already runs every minute, a 15-minute wall-clock window just adds dead
+time on top of that for no benefit — what actually matters is *how many
+times* the judge has rejected it, not how long it's been sitting there.
+
+Added `Submission.invalidImageAttempts` (migration `0009_invalid_image_attempts`)
+to count consecutive `INVALID_IMAGE` failures per submission. The judging
+sweep in [backend/src/jobs/weekly.ts](backend/src/jobs/weekly.ts) now
+auto-disqualifies after `MAX_INVALID_IMAGE_ATTEMPTS = 3` attempts (~3
+minutes at one sweep per minute) instead of the old 15-minute window.
