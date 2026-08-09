@@ -190,7 +190,11 @@ function SubmitInner() {
                 Upload your meme (recommended — hosted on Arena infrastructure
                 that GenLayer validators can always reach) or paste a public
                 direct image URL. Validators fetch this image on-chain;
-                unreachable images get disqualified.
+                unreachable images get disqualified. A plain, unedited photo
+                of a real person with no meme-format framing (no caption,
+                template or comic context) is sometimes rejected outright by
+                the AI judge — give it something that clearly reads as a
+                meme, not a personal photo.
               </p>
               <label className="cursor-pointer group block mb-6">
                 <div className="glass-panel border-dashed border-2 border-white/20 rounded-xl h-40 flex flex-col items-center justify-center hover:border-cyan-soft transition-all hover:bg-white/5">

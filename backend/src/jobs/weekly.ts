@@ -35,10 +35,20 @@ function isMissingOnchainCompetition(err: unknown): boolean {
   return /Competition not found/i.test((err as Error).message || "");
 }
 
+// Only the literal message the contract itself raises for a genuinely
+// missing competition (see meme_olympics.py's get_competition) counts as
+// proof it's gone. "execution failed" / "unknown RPC error" are generic
+// RPC-layer wrappers used for all sorts of transient conditions — GenLayer
+// wraps a plain hourly rate limit ("Rate limit exceeded: 500 requests per
+// hour") in the exact same "unknown RPC error" text, so matching on that
+// alone caused a live, still-judging competition to get permanently
+// detached from its on-chain lifecycle (onchainCreated flipped to false)
+// on nothing more than a transient rate limit — a real production
+// incident, not hypothetical. A generic/ambiguous error must never be
+// treated as confirmation of absence; every call site here already has a
+// safe fallback (log and retry next tick) for that case.
 function isMissingOnchainCompetitionRead(err: unknown): boolean {
-  return /Competition not found|execution failed|unknown RPC error/i.test(
-    (err as Error).message || ""
-  );
+  return isMissingOnchainCompetition(err);
 }
 
 async function markCompetitionDetachedFromChain(id: string) {
@@ -377,6 +387,33 @@ export async function runJudgingSweep() {
           data: { status: "failed" },
         });
         logger.warn({ sub: sub.id }, "marked failed: never registered on-chain");
+        continue;
+      }
+      // The vision judge can reject a technically-valid image outright
+      // (GenLayer's exec_prompt raising LLM_ERROR/INVALID_IMAGE) — seen in
+      // production for plain, unmedited photos of real people with no
+      // meme-format framing (no caption/template/comic context). This is
+      // deterministic per image, not a landing-lag issue, so retrying
+      // immediately never helps — but a couple of sweeps' worth of retries
+      // is kept in case it's model variance across validator rotations.
+      // Past that, auto-disqualify instead of leaving it stuck in
+      // "onchain" forever, which previously required manual intervention
+      // to unblock that arena's finalization entirely.
+      if (
+        /INVALID_IMAGE/.test(msg) &&
+        Date.now() - sub.createdAt.getTime() > 15 * 60 * 1000
+      ) {
+        await prisma.submission.update({
+          where: { id: sub.id },
+          data: {
+            status: "disqualified",
+            evaluationSummary:
+              "Auto-disqualified: the AI judge repeatedly rejected this image as invalid " +
+              "(GenLayer INVALID_IMAGE). This usually means a plain, unedited photo of a " +
+              "real person with no meme-format framing (caption/template/comic context).",
+          },
+        });
+        logger.warn({ sub: sub.id }, "auto-disqualified: repeated INVALID_IMAGE from judge");
         continue;
       }
       logger.error({ sub: sub.id, err: msg }, "evaluation failed; will retry next sweep");

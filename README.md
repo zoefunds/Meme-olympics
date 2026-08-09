@@ -311,6 +311,17 @@ funding/claim flow. Highlights:
   confirm, not on every manual resync, so pressing the resync button on an
   already-confirmed arena can no longer trigger a spurious on-chain error.
   See [v2-update.md](v2-update.md).
+- **A transient RPC error can no longer detach a live arena from its
+  on-chain lifecycle** — the check that decides whether a competition still
+  exists on the current contract now only trusts the contract's own literal
+  "not found" message, not generic RPC-layer wrapper text that GenLayer
+  also uses for things like an hourly rate limit. See [v2-update.md](v2-update.md).
+- **Judging self-heals from a rejected image** — if the AI judge repeatedly
+  rejects a submission's image outright (`INVALID_IMAGE`, typically a
+  plain, unedited photo of a real person with no meme-format framing), the
+  judging sweep now auto-disqualifies it after a short retry window instead
+  of leaving it stuck and silently blocking that arena's finalization
+  forever. See [v2-update.md](v2-update.md).
 
 ## Automation (UTC)
 

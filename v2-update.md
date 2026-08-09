@@ -199,6 +199,84 @@ was left as-is — it's an intentional anti-spam policy, not a bug — but is
 worth revisiting if admin-wallet testing needs a higher (or exempted)
 limit going forward.
 
+## 9. A rate limit falsely detached a live arena from its on-chain lifecycle
+
+**Symptom:** an arena stuck in `judging` refused to finalize, and its last
+two unjudged submissions could no longer be retried at all — no error
+surfaced anywhere in the UI, they just silently stopped progressing.
+
+**Root cause:** a real bug in [backend/src/jobs/weekly.ts](backend/src/jobs/weekly.ts),
+not the `INVALID_IMAGE` submission that prompted the investigation (that
+part turned out fine — see section 10). While polling whether the
+competition still existed on the current contract, GenLayer's RPC hit its
+own hourly rate limit (`Rate limit exceeded: 500 requests per hour`),
+which its client wraps in the exact same generic `"unknown RPC error"`
+text used for a genuinely missing competition. A helper function,
+`isMissingOnchainCompetitionRead`, treated that generic wrapper text as
+proof the competition didn't exist on the current contract — a transient
+rate limit was enough to flip `onchainCreated` to `false` in the DB,
+permanently exiting a completely healthy, still-judging arena from its
+on-chain lifecycle. Both the judging sweep and the finalize sweep filter
+on `onchainCreated: true`, so once detached, nothing could touch that
+arena again automatically.
+
+**Fix:** narrowed the check to only the literal message the contract
+itself raises for a genuine miss (`get_competition`'s
+`"[EXPECTED] Competition not found: <id>"` in
+[contracts/meme_olympics.py](contracts/meme_olympics.py)) — every call
+site already had a safe fallback (log and retry next tick) for anything
+else, so this was a pure narrowing with no new code paths. Manually
+repaired the one arena already caught by it (`onchainCreated` restored to
+`true` in production).
+
+## 10. `INVALID_IMAGE` judging failures — likely cause and two mitigations
+
+**Symptom:** two submissions repeatedly failed evaluation with
+`[LLM_ERROR] exec_prompt failed: {'causes': ['INVALID_IMAGE'], 'ctx': {}}`,
+thrown from inside the contract's vision judging call itself.
+
+**Investigation:** downloaded and verified both images directly — both
+were clean, correctly-served, standard JPEGs from our own first-party
+image host, same as every submission that judged fine. Not a fetch,
+format, or hosting problem. Comparing the two failing images against the
+seven that judged successfully turned up a clear pattern: both failures
+were plain, unedited photographs of real, identifiable people with no
+meme-format framing (no caption, no template, no comic-panel context);
+every successful submission was either illustrated/comic content, a CGI
+render, or had obvious reaction-meme framing. This points to GenLayer's
+underlying vision model applying its own content-safety gate on plain
+real-person photos — a hypothesis based on the pattern across all 9
+submissions, not something confirmable from our side (we have no
+visibility into GenLayer's internal model behavior).
+
+**Immediate resolution:** the two stuck submissions were marked
+`disqualified` in the DB so the arena's finalize sweep (which only
+proceeds once every submission is out of `pending`/`onchain`) could run;
+confirmed the contract's own `finalize_competition` only ranks submissions
+with on-chain status `EVALUATED` and simply skips anything else, so this
+didn't need any on-chain intervention. The arena finalized cleanly
+afterward with its 7 successfully-judged entries.
+
+**Prevention going forward (implemented):**
+- **Backend auto-recovery** — [backend/src/jobs/weekly.ts](backend/src/jobs/weekly.ts)'s
+  judging sweep now recognizes `INVALID_IMAGE` specifically. It's retried
+  for 15 minutes (a few sweeps' worth, in case it's model variance across
+  validator rotations) and then auto-disqualified with a recorded reason,
+  instead of sitting in `onchain` forever and silently blocking that
+  arena's finalization the way this incident did — no manual DB
+  intervention should be needed for this class of failure again.
+- **Frontend disclaimer** — [frontend/src/app/submit/page.tsx](frontend/src/app/submit/page.tsx)
+  now warns during upload that a plain, unedited photo of a real person
+  with no meme-format framing is sometimes rejected outright by the AI
+  judge.
+- **Deliberately not implemented:** a hard block on the frontend that
+  preemptively refuses to submit "risky" images. There's no reliable way
+  to predict this rejection from the frontend without running the same
+  vision call GenLayer itself runs — a heuristic (e.g. face detection)
+  would false-positive on plenty of legitimate reaction memes that also
+  feature faces, blocking real entries to prevent a failure mode that's
+  now self-healing anyway.
+
 ---
 
 All backend fixes covered by the existing vitest suite (pre-existing,
