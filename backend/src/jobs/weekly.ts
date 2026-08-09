@@ -22,6 +22,11 @@ import * as escrow from "../services/baseSepolia";
 import { logger } from "../lib/logger";
 import { withLock } from "../lib/redis";
 
+// Consecutive INVALID_IMAGE evaluate_submission failures (sweeps run every
+// minute, so 3 attempts is ~3 minutes, not a long wait) before a
+// submission is auto-disqualified instead of retried forever.
+const MAX_INVALID_IMAGE_ATTEMPTS = 3;
+
 function isoWeekId(date = new Date()): string {
   const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
   const dayNum = d.getUTCDay() || 7;
@@ -391,29 +396,45 @@ export async function runJudgingSweep() {
       }
       // The vision judge can reject a technically-valid image outright
       // (GenLayer's exec_prompt raising LLM_ERROR/INVALID_IMAGE) — seen in
-      // production for plain, unmedited photos of real people with no
+      // production for plain, unedited photos of real people with no
       // meme-format framing (no caption/template/comic context). This is
-      // deterministic per image, not a landing-lag issue, so retrying
-      // immediately never helps — but a couple of sweeps' worth of retries
-      // is kept in case it's model variance across validator rotations.
-      // Past that, auto-disqualify instead of leaving it stuck in
-      // "onchain" forever, which previously required manual intervention
-      // to unblock that arena's finalization entirely.
-      if (
-        /INVALID_IMAGE/.test(msg) &&
-        Date.now() - sub.createdAt.getTime() > 15 * 60 * 1000
-      ) {
-        await prisma.submission.update({
-          where: { id: sub.id },
-          data: {
-            status: "disqualified",
-            evaluationSummary:
-              "Auto-disqualified: the AI judge repeatedly rejected this image as invalid " +
-              "(GenLayer INVALID_IMAGE). This usually means a plain, unedited photo of a " +
-              "real person with no meme-format framing (caption/template/comic context).",
-          },
-        });
-        logger.warn({ sub: sub.id }, "auto-disqualified: repeated INVALID_IMAGE from judge");
+      // deterministic per image, not a landing-lag issue, so a handful of
+      // retries (in case it's model variance across validator rotations)
+      // is enough — MAX_INVALID_IMAGE_ATTEMPTS attempts, then
+      // auto-disqualify instead of leaving it stuck in "onchain" forever,
+      // which previously required manual intervention to unblock that
+      // arena's finalization entirely. Counted in attempts, not elapsed
+      // time, since sweeps already run every minute — a time window just
+      // adds unnecessary wait on top of that.
+      if (/INVALID_IMAGE/.test(msg)) {
+        const attempts = sub.invalidImageAttempts + 1;
+        if (attempts >= MAX_INVALID_IMAGE_ATTEMPTS) {
+          await prisma.submission.update({
+            where: { id: sub.id },
+            data: {
+              status: "disqualified",
+              invalidImageAttempts: attempts,
+              evaluationSummary:
+                `Auto-disqualified: the AI judge rejected this image as invalid ` +
+                `(GenLayer INVALID_IMAGE) on ${attempts} consecutive attempts. This usually ` +
+                `means a plain, unedited photo of a real person with no meme-format framing ` +
+                `(caption/template/comic context).`,
+            },
+          });
+          logger.warn(
+            { sub: sub.id, attempts },
+            "auto-disqualified: repeated INVALID_IMAGE from judge"
+          );
+        } else {
+          await prisma.submission.update({
+            where: { id: sub.id },
+            data: { invalidImageAttempts: attempts },
+          });
+          logger.warn(
+            { sub: sub.id, attempts },
+            "INVALID_IMAGE from judge; will retry next sweep"
+          );
+        }
         continue;
       }
       logger.error({ sub: sub.id, err: msg }, "evaluation failed; will retry next sweep");

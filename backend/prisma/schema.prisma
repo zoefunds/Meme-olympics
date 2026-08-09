@@ -62,6 +62,11 @@ model Submission {
   plagiarismVerdict    String      @default("")
   plagiarismConfidence Int         @default(0)
   evaluationSummary    String      @default("")
+  // Consecutive evaluate_submission attempts that failed with GenLayer's
+  // LLM_ERROR/INVALID_IMAGE specifically (not other error types) — after
+  // MAX_INVALID_IMAGE_ATTEMPTS (see jobs/weekly.ts) the submission is
+  // auto-disqualified instead of retried forever.
+  invalidImageAttempts Int         @default(0)
   createdAt            DateTime    @default(now())
   updatedAt            DateTime    @updatedAt
   competition          Competition @relation(fields: [competitionId], references: [id])
