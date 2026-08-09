@@ -31,6 +31,8 @@ function LeaderboardInner() {
   const [disqualified, setDisqualified] = useState<Entry[]>([]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [dqPage, setDqPage] = useState(1);
+  const [dqTotalPages, setDqTotalPages] = useState(1);
   const PAGE_SIZE = 15;
 
   useEffect(() => {
@@ -45,8 +47,11 @@ function LeaderboardInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Switching arenas always starts back at page 1 of the detailed rankings.
-  useEffect(() => setPage(1), [selected]);
+  // Switching arenas always starts back at page 1 of both tables.
+  useEffect(() => {
+    setPage(1);
+    setDqPage(1);
+  }, [selected]);
 
   useEffect(() => {
     if (!selected) return;
@@ -56,12 +61,16 @@ function LeaderboardInner() {
         leaderboard: Entry[];
         totalPages: number;
         disqualified?: Entry[];
-      }>(`/api/competitions/${selected}/leaderboard?page=${page}&pageSize=${PAGE_SIZE}`)
+        dqTotalPages?: number;
+      }>(
+        `/api/competitions/${selected}/leaderboard?page=${page}&pageSize=${PAGE_SIZE}&dqPage=${dqPage}`
+      )
         .then((r) => {
           setPodium(r.podium);
           setRest(r.leaderboard);
           setTotalPages(r.totalPages);
           setDisqualified(r.disqualified || []);
+          setDqTotalPages(r.dqTotalPages || 1);
         })
         .catch(() => {
           setPodium([]);
@@ -73,7 +82,7 @@ function LeaderboardInner() {
     // rankings update live instead of needing a manual reload.
     const id = setInterval(load, 15000);
     return () => clearInterval(id);
-  }, [selected, page]);
+  }, [selected, page, dqPage]);
 
   return (
     <main className="px-4 md:px-12 py-8 max-w-arena mx-auto">
@@ -288,6 +297,27 @@ function LeaderboardInner() {
                 </tbody>
               </table>
             </div>
+            {dqTotalPages > 1 && (
+              <div className="p-4 border-t border-white/10 flex items-center justify-between">
+                <button
+                  onClick={() => setDqPage((p) => Math.max(1, p - 1))}
+                  disabled={dqPage <= 1}
+                  className="px-4 py-2 rounded font-display text-xs font-semibold uppercase tracking-widest bg-white/5 border border-white/10 text-on-surface hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-white/5"
+                >
+                  ← Previous
+                </button>
+                <MonoLabel>
+                  Page {dqPage} of {dqTotalPages}
+                </MonoLabel>
+                <button
+                  onClick={() => setDqPage((p) => Math.min(dqTotalPages, p + 1))}
+                  disabled={dqPage >= dqTotalPages}
+                  className="px-4 py-2 rounded font-display text-xs font-semibold uppercase tracking-widest bg-white/5 border border-white/10 text-on-surface hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-white/5"
+                >
+                  Next →
+                </button>
+              </div>
+            )}
           </GlassCard>
         </section>
       )}

@@ -378,11 +378,11 @@ competitionsRouter.get("/:id", async (req, res) => {
   return res.json(payload);
 });
 
-// GET /api/competitions/:id/leaderboard?page=1&pageSize=15 — cached 60s per
-// page. Before finalization, only evaluated/winner entries show (live,
-// in-progress judging). Once the arena is finalized, every entry is shown,
-// with disqualified memes split into their own `disqualified` section
-// instead of being hidden.
+// GET /api/competitions/:id/leaderboard?page=1&pageSize=15&dqPage=1 — cached
+// 60s per page. Before finalization, only evaluated/winner entries show
+// (live, in-progress judging). Once the arena is finalized, every entry is
+// shown, with disqualified memes split into their own `disqualified`
+// section instead of being hidden.
 //
 // The top 3 (`podium`) are always returned in full, separately from
 // `leaderboard`, which holds one page of the rest (rank 4+) — so a large
@@ -390,6 +390,8 @@ competitionsRouter.get("/:id", async (req, res) => {
 // ranked list in one response; the frontend pages through the rest with
 // `page`/`totalPages`. `total` is the full ranked count (podium included),
 // used for both the arena's submission-count display and page math.
+// `disqualified` is paginated the same way but on its own `dqPage` cursor,
+// independent of `page` — the two sections scroll separately in the UI.
 const PODIUM_SIZE = 3;
 const DEFAULT_PAGE_SIZE = 15;
 const MAX_PAGE_SIZE = 50;
@@ -400,7 +402,8 @@ competitionsRouter.get("/:id/leaderboard", async (req, res) => {
     MAX_PAGE_SIZE,
     Math.max(1, parseInt(String(req.query.pageSize ?? String(DEFAULT_PAGE_SIZE)), 10) || DEFAULT_PAGE_SIZE)
   );
-  const key = `lb:${req.params.id}:${page}:${pageSize}`;
+  const dqPage = Math.max(1, parseInt(String(req.query.dqPage ?? "1"), 10) || 1);
+  const key = `lb:${req.params.id}:${page}:${pageSize}:${dqPage}`;
   const cached = await cacheGet(key);
   if (cached) return res.json(JSON.parse(cached));
 
@@ -434,8 +437,9 @@ competitionsRouter.get("/:id/leaderboard", async (req, res) => {
   const where = { competitionId: req.params.id, status: { in: rankedStatuses } };
 
   type EntrySub = Prisma.SubmissionGetPayload<{ include: typeof include }>;
+  const dqWhere = { competitionId: req.params.id, status: "disqualified" };
 
-  const [total, podiumSubs, pageSubs, disqualifiedSubs] = await Promise.all([
+  const [total, podiumSubs, pageSubs, dqTotal, disqualifiedSubs] = await Promise.all([
     prisma.submission.count({ where }),
     prisma.submission.findMany({ where, orderBy, take: PODIUM_SIZE, include }),
     prisma.submission.findMany({
@@ -445,11 +449,13 @@ competitionsRouter.get("/:id/leaderboard", async (req, res) => {
       take: pageSize,
       include,
     }),
+    finalized ? prisma.submission.count({ where: dqWhere }) : Promise.resolve(0),
     finalized
       ? prisma.submission.findMany({
-          where: { competitionId: req.params.id, status: "disqualified" },
+          where: dqWhere,
           orderBy,
-          take: 500, // matches the contract's MAX_SUBMISSIONS_PER_COMPETITION
+          skip: (dqPage - 1) * pageSize,
+          take: pageSize,
           include,
         })
       : Promise.resolve([] as EntrySub[]),
@@ -464,6 +470,9 @@ competitionsRouter.get("/:id/leaderboard", async (req, res) => {
     pageSize: number;
     totalPages: number;
     disqualified?: unknown[];
+    dqTotal?: number;
+    dqPage?: number;
+    dqTotalPages?: number;
   } = {
     podium: podiumSubs.map((s, i) => ({ rank: i + 1, ...toEntry(s) })),
     leaderboard: pageSubs.map((s, i) => ({
@@ -475,7 +484,12 @@ competitionsRouter.get("/:id/leaderboard", async (req, res) => {
     pageSize,
     totalPages: Math.max(1, Math.ceil(restTotal / pageSize)),
   };
-  if (finalized) payload.disqualified = disqualifiedSubs.map((s) => toEntry(s));
+  if (finalized) {
+    payload.disqualified = disqualifiedSubs.map((s) => toEntry(s));
+    payload.dqTotal = dqTotal;
+    payload.dqPage = dqPage;
+    payload.dqTotalPages = Math.max(1, Math.ceil(dqTotal / pageSize));
+  }
 
   await cacheSet(key, JSON.stringify(payload), 60_000);
   return res.json(payload);
