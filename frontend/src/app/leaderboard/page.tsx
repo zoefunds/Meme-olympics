@@ -26,8 +26,12 @@ function LeaderboardInner() {
   const arenaParam = searchParams.get("arena");
   const [comps, setComps] = useState<Comp[]>([]);
   const [selected, setSelected] = useState<string>("");
-  const [entries, setEntries] = useState<Entry[]>([]);
+  const [podium, setPodium] = useState<Entry[]>([]);
+  const [rest, setRest] = useState<Entry[]>([]);
   const [disqualified, setDisqualified] = useState<Entry[]>([]);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const PAGE_SIZE = 15;
 
   useEffect(() => {
     api<{ competitions: Comp[] }>("/api/competitions").then((r) => {
@@ -41,18 +45,27 @@ function LeaderboardInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Switching arenas always starts back at page 1 of the detailed rankings.
+  useEffect(() => setPage(1), [selected]);
+
   useEffect(() => {
     if (!selected) return;
     const load = () =>
-      api<{ leaderboard: Entry[]; disqualified?: Entry[] }>(
-        `/api/competitions/${selected}/leaderboard`
-      )
+      api<{
+        podium: Entry[];
+        leaderboard: Entry[];
+        totalPages: number;
+        disqualified?: Entry[];
+      }>(`/api/competitions/${selected}/leaderboard?page=${page}&pageSize=${PAGE_SIZE}`)
         .then((r) => {
-          setEntries(r.leaderboard);
+          setPodium(r.podium);
+          setRest(r.leaderboard);
+          setTotalPages(r.totalPages);
           setDisqualified(r.disqualified || []);
         })
         .catch(() => {
-          setEntries([]);
+          setPodium([]);
+          setRest([]);
           setDisqualified([]);
         });
     load();
@@ -60,10 +73,7 @@ function LeaderboardInner() {
     // rankings update live instead of needing a manual reload.
     const id = setInterval(load, 15000);
     return () => clearInterval(id);
-  }, [selected]);
-
-  const podium = entries.slice(0, 3);
-  const rest = entries.slice(3);
+  }, [selected, page]);
 
   return (
     <main className="px-4 md:px-12 py-8 max-w-arena mx-auto">
@@ -208,6 +218,27 @@ function LeaderboardInner() {
               </tbody>
             </table>
           </div>
+          {totalPages > 1 && (
+            <div className="p-4 border-t border-white/10 flex items-center justify-between">
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1}
+                className="px-4 py-2 rounded font-display text-xs font-semibold uppercase tracking-widest bg-white/5 border border-white/10 text-on-surface hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-white/5"
+              >
+                ← Previous
+              </button>
+              <MonoLabel>
+                Page {page} of {totalPages}
+              </MonoLabel>
+              <button
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages}
+                className="px-4 py-2 rounded font-display text-xs font-semibold uppercase tracking-widest bg-white/5 border border-white/10 text-on-surface hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-white/5"
+              >
+                Next →
+              </button>
+            </div>
+          )}
         </GlassCard>
       )}
 

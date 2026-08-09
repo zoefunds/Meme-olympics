@@ -63,10 +63,10 @@ export default function Arena() {
         .then(async (c) => {
           setComp(c);
           if (c.active && c.id) {
-            const lb = await api<{ leaderboard: Entry[] }>(
+            const lb = await api<{ podium: Entry[]; leaderboard: Entry[] }>(
               `/api/competitions/${c.id}/leaderboard`
             );
-            setEntries(lb.leaderboard.slice(0, 9));
+            setEntries([...lb.podium, ...lb.leaderboard].slice(0, 9));
           }
         })
         .catch(() => setComp({ active: false }));

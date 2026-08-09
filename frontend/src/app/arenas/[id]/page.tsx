@@ -115,8 +115,8 @@ export default function ArenaDetail() {
     api<Comp>(`/api/competitions/${params.id}`)
       .then(setComp)
       .catch((e) => setError((e as Error).message));
-    api<{ leaderboard: unknown[] }>(`/api/competitions/${params.id}/leaderboard`)
-      .then((r) => setSubCount(r.leaderboard.length))
+    api<{ total: number }>(`/api/competitions/${params.id}/leaderboard?pageSize=1`)
+      .then((r) => setSubCount(r.total))
       .catch(() => undefined);
   }
 

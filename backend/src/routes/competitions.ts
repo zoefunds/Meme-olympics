@@ -1,4 +1,5 @@
 import { Router, Response } from "express";
+import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { ethers } from "ethers";
 import { prisma } from "../lib/prisma";
@@ -377,12 +378,29 @@ competitionsRouter.get("/:id", async (req, res) => {
   return res.json(payload);
 });
 
-// GET /api/competitions/:id/leaderboard — cached 60s. Before finalization,
-// only evaluated/winner entries show (live, in-progress judging). Once the
-// arena is finalized, every entry is shown, with disqualified memes split
-// into their own `disqualified` section instead of being hidden.
+// GET /api/competitions/:id/leaderboard?page=1&pageSize=15 — cached 60s per
+// page. Before finalization, only evaluated/winner entries show (live,
+// in-progress judging). Once the arena is finalized, every entry is shown,
+// with disqualified memes split into their own `disqualified` section
+// instead of being hidden.
+//
+// The top 3 (`podium`) are always returned in full, separately from
+// `leaderboard`, which holds one page of the rest (rank 4+) — so a large
+// arena (up to the contract's 500-submission cap) never ships its whole
+// ranked list in one response; the frontend pages through the rest with
+// `page`/`totalPages`. `total` is the full ranked count (podium included),
+// used for both the arena's submission-count display and page math.
+const PODIUM_SIZE = 3;
+const DEFAULT_PAGE_SIZE = 15;
+const MAX_PAGE_SIZE = 50;
+
 competitionsRouter.get("/:id/leaderboard", async (req, res) => {
-  const key = `lb:${req.params.id}`;
+  const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10) || 1);
+  const pageSize = Math.min(
+    MAX_PAGE_SIZE,
+    Math.max(1, parseInt(String(req.query.pageSize ?? String(DEFAULT_PAGE_SIZE)), 10) || DEFAULT_PAGE_SIZE)
+  );
+  const key = `lb:${req.params.id}:${page}:${pageSize}`;
   const cached = await cacheGet(key);
   if (cached) return res.json(JSON.parse(cached));
 
@@ -412,40 +430,53 @@ competitionsRouter.get("/:id/leaderboard", async (req, res) => {
 
   const orderBy = [{ totalScore: "desc" as const }, { id: "asc" as const }];
   const include = { user: { select: { username: true, authAddress: true } } };
-  const take = 500; // matches the contract's MAX_SUBMISSIONS_PER_COMPETITION
+  const rankedStatuses = finalized ? ["evaluated", "winner", "failed"] : ["evaluated", "winner"];
+  const where = { competitionId: req.params.id, status: { in: rankedStatuses } };
 
-  let payload: { leaderboard: unknown[]; disqualified?: unknown[] };
-  if (!finalized) {
-    const subs = await prisma.submission.findMany({
-      where: { competitionId: req.params.id, status: { in: ["evaluated", "winner"] } },
+  type EntrySub = Prisma.SubmissionGetPayload<{ include: typeof include }>;
+
+  const [total, podiumSubs, pageSubs, disqualifiedSubs] = await Promise.all([
+    prisma.submission.count({ where }),
+    prisma.submission.findMany({ where, orderBy, take: PODIUM_SIZE, include }),
+    prisma.submission.findMany({
+      where,
       orderBy,
-      take,
+      skip: PODIUM_SIZE + (page - 1) * pageSize,
+      take: pageSize,
       include,
-    });
-    payload = { leaderboard: subs.map((s, i) => ({ rank: i + 1, ...toEntry(s) })) };
-  } else {
-    const [subs, disqualifiedSubs] = await Promise.all([
-      prisma.submission.findMany({
-        where: {
-          competitionId: req.params.id,
-          status: { in: ["evaluated", "winner", "failed"] },
-        },
-        orderBy,
-        take,
-        include,
-      }),
-      prisma.submission.findMany({
-        where: { competitionId: req.params.id, status: "disqualified" },
-        orderBy,
-        take,
-        include,
-      }),
-    ]);
-    payload = {
-      leaderboard: subs.map((s, i) => ({ rank: i + 1, ...toEntry(s) })),
-      disqualified: disqualifiedSubs.map((s) => toEntry(s)),
-    };
-  }
+    }),
+    finalized
+      ? prisma.submission.findMany({
+          where: { competitionId: req.params.id, status: "disqualified" },
+          orderBy,
+          take: 500, // matches the contract's MAX_SUBMISSIONS_PER_COMPETITION
+          include,
+        })
+      : Promise.resolve([] as EntrySub[]),
+  ]);
+
+  const restTotal = Math.max(0, total - PODIUM_SIZE);
+  const payload: {
+    podium: unknown[];
+    leaderboard: unknown[];
+    total: number;
+    page: number;
+    pageSize: number;
+    totalPages: number;
+    disqualified?: unknown[];
+  } = {
+    podium: podiumSubs.map((s, i) => ({ rank: i + 1, ...toEntry(s) })),
+    leaderboard: pageSubs.map((s, i) => ({
+      rank: PODIUM_SIZE + (page - 1) * pageSize + i + 1,
+      ...toEntry(s),
+    })),
+    total,
+    page,
+    pageSize,
+    totalPages: Math.max(1, Math.ceil(restTotal / pageSize)),
+  };
+  if (finalized) payload.disqualified = disqualifiedSubs.map((s) => toEntry(s));
+
   await cacheSet(key, JSON.stringify(payload), 60_000);
   return res.json(payload);
 });
