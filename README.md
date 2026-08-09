@@ -321,8 +321,10 @@ funding/claim flow. Highlights:
 - **Judging self-heals from a rejected image** — if the AI judge repeatedly
   rejects a submission's image outright (`INVALID_IMAGE`, typically a
   plain, unedited photo of a real person with no meme-format framing), the
-  judging sweep now auto-disqualifies it after a short retry window instead
-  of leaving it stuck and silently blocking that arena's finalization
+  judging sweep now auto-disqualifies it after 3 consecutive attempts
+  (~3 minutes, one sweep per minute — counted per submission, not by
+  elapsed time) instead of leaving it stuck and silently blocking that
+  arena's finalization
   forever. See [v2-update.md](v2-update.md).
 
 ## Automation (UTC)
