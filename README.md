@@ -5,7 +5,7 @@ in real USDC on Base Sepolia — not likes, not votes, only logic.**
 
 - **Live app:** https://meme-olympics.vercel.app
 - **API:** https://meme-olympics-api-prod.fly.dev (Fly.io, 24/7, 2 machines)
-- **GenLayer Intelligent Contract (StudioNet):** `0x31E458C494FDFE74e3Fdd23e46009544074333Fa`
+- **GenLayer Intelligent Contract (StudioNet):** `0x5e6ac07590509DD20fF3279692A8E8FD6a557563`
 - **MemeOlympicsEscrow (Base Sepolia):** `0x76128b04627b80D8E556568cc7fA7cb0eaf035Fe`
 - **USDC (Base Sepolia, Circle official):** `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
 
@@ -215,9 +215,11 @@ sequenceDiagram
   that path but isn't needed when deploying via the Studio UI. **After any
   redeploy, the new owner must call `add_admin(<operator address>)`** or
   every operator-signed action (judging, finalizing, relaying) fails with
-  `Only admin may call this` — the exact bug this project has now hit on
-  every single redeploy (three times), most recently on the 2026-08-08
-  contract migration; see [v2-update.md](v2-update.md).
+  `Only admin may call this` — this project hit that bug on three separate
+  redeploys; **always verify with the contract's own `is_admin(<operator
+  address>)` read before assuming a fresh deployment needs it** — the
+  2026-08-09 migration's new contract already had the operator pre-admitted
+  and needed no fix. See [v2-update.md](v2-update.md).
 - `gl.message.sender_address` is the correct sender accessor on current
   GenVM.
 

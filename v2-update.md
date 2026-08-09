@@ -284,3 +284,34 @@ unrelated failures confirmed present before these changes via `git stash`);
 frontend changes verified with `tsc --noEmit` and a full production build.
 Deployed live: backend via `fly deploy` to `meme-olympics-api-prod`,
 frontend via `vercel deploy --prod` to `meme-olympics`.
+
+---
+
+# 2026-08-09 addendum — second contract migration
+
+## 11. GenLayer contract migration #2
+
+Redeployed again at:
+
+```
+0x5e6ac07590509DD20fF3279692A8E8FD6a557563
+```
+
+Same playbook as section 1: `GENLAYER_CONTRACT_ADDRESS` Fly secret updated
+(backend redeployed, health-checked), `NEXT_PUBLIC_GENLAYER_CONTRACT_ADDRESS`
+updated on Vercel (frontend rebuilt and redeployed), local `.env`/`.env.production`
+updated. Production DB wiped again — this time 1 competition, 9
+submissions, 0 disputes (the finalized "Clarke Testnet" arena) — verified
+`0/0/0` remaining and confirmed live via `{"competitions":[]}`. No
+auto-creation logic exists anywhere (re-verified: only `runCloseTick`,
+`runJudgeTick`, `runRelayTick` are cron-scheduled, none of which create
+arenas; `runWeeklyRollover` remains manual-trigger-only), so nothing could
+resurrect the previous contract's arena under the new address regardless.
+
+**Learned from sections 7 and this one:** rather than waiting for
+`Only admin may call this` to surface from a real user action, checked
+proactively this time via the contract's own `is_admin(<operator
+address>)` read before declaring the migration done. This deployment's
+operator wallet was already admin — no fix needed, unlike the previous two
+migrations. Worth checking `is_admin` as a standard step on every future
+contract migration, before it has a chance to block anything.
