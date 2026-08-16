@@ -4,7 +4,7 @@ import { z } from "zod";
 import { ethers } from "ethers";
 import { prisma } from "../lib/prisma";
 import { cacheGet, cacheSet } from "../lib/redis";
-import { requireAuth, requireAdmin, AuthedRequest } from "../middleware/auth";
+import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { limit } from "../middleware/rateLimit";
 import * as gl from "../services/genlayer";
 import * as escrow from "../services/baseSepolia";
@@ -24,9 +24,8 @@ const USDC_UNIT = BigInt(10) ** BigInt(6);
 const ACTIVE_COMPETITION_STATUSES = ["created", "open", "judging"];
 const MAX_ARENA_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 
-// POST /api/competitions — ADMIN-ONLY: hosting an arena is a tool for the
-// admin wallet, not general users (see requireAdmin below). GenLayer itself
-// never escrows value — `prizeUsdc` (optional, may be 0 for a
+// POST /api/competitions — any authenticated user may host an arena.
+// GenLayer itself never escrows value — `prizeUsdc` (optional, may be 0 for a
 // prestige-only arena) is only the DECLARED prize amount recorded on-chain
 // for display/ranking. The host still needs to actually deposit that USDC
 // on the Base Sepolia escrow contract (see GET /:id/escrow-fund-calldata)
@@ -34,7 +33,6 @@ const MAX_ARENA_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 competitionsRouter.post(
   "/",
   requireAuth,
-  requireAdmin,
   limit("create-comp", 3, 86400),
   async (req: AuthedRequest, res: Response) => {
     const schema = z.object({

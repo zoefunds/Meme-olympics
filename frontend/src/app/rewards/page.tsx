@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { api, getUser } from "@/lib/api";
+import { api, clearSession, getUser } from "@/lib/api";
 import { connectWallet, sendEscrowTxSequence } from "@/lib/baseSepolia";
 import { GlassCard, MonoLabel, StatusChip, PrestigeButton } from "@/components/ui";
 
@@ -27,9 +27,25 @@ export default function RewardsPage() {
   const [data, setData] = useState<Rewards | null>(null);
   const [claiming, setClaiming] = useState(false);
   const [claimMsg, setClaimMsg] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
-  function load() {
-    api<Rewards>("/api/rewards/me").then(setData).catch(() => undefined);
+  async function load() {
+    try {
+      const rewards = await api<Rewards>("/api/rewards/me");
+      setData(rewards);
+      setLoadError("");
+    } catch (err) {
+      const message = (err as Error).message;
+      if (message === "AUTH_REQUIRED") {
+        clearSession();
+        router.replace("/login");
+        return;
+      }
+      setLoadError(message);
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -72,12 +88,21 @@ export default function RewardsPage() {
         <h1 className="font-display font-bold text-4xl md:text-5xl">REWARDS</h1>
       </header>
 
+      {loadError && (
+        <GlassCard className="p-6 border-danger/40">
+          <p className="font-mono text-sm text-danger">Could not load rewards: {loadError}</p>
+          <PrestigeButton className="mt-4" onClick={() => { setLoading(true); void load(); }}>
+            Retry
+          </PrestigeButton>
+        </GlassCard>
+      )}
+
       <GlassCard className="p-8 md:p-12 border-gold/20 prestige-glow" scan>
         <div className="flex flex-col md:flex-row justify-between gap-8 items-start md:items-center">
           <div>
             <MonoLabel>Claimable USDC (Base Sepolia)</MonoLabel>
             <div className="font-display font-bold text-6xl text-gold mt-2">
-              {data ? data.totalClaimableUsdc.toLocaleString() : "—"}
+              {data ? data.totalClaimableUsdc.toLocaleString() : loading ? "Loading…" : "—"}
               <span className="text-2xl text-on-variant ml-2">USDC</span>
             </div>
             <p className="font-mono text-[11px] text-on-variant mt-3 break-all">
@@ -110,7 +135,11 @@ export default function RewardsPage() {
 
       <section>
         <h2 className="font-display font-semibold text-2xl mb-6 uppercase">Winning Entries</h2>
-        {!data || data.wins.length === 0 ? (
+        {loading ? (
+          <GlassCard className="p-12 text-center">
+            <p className="font-mono text-sm text-on-variant">Loading your rewards…</p>
+          </GlassCard>
+        ) : !data || data.wins.length === 0 ? (
           <GlassCard className="p-12 text-center">
             <p className="font-mono text-sm text-on-variant">
               No podium finishes yet. The validators await your best work —{" "}

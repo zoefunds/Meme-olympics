@@ -17,8 +17,6 @@ export default function NewCompetition() {
     const user = getUser();
     if (!user) {
       router.push("/login");
-    } else if (user.role !== "admin") {
-      router.push("/dashboard");
     }
   }, [router]);
 
@@ -97,7 +95,7 @@ export default function NewCompetition() {
     <main className="px-4 md:px-12 py-12 max-w-2xl mx-auto">
       <header className="mb-10">
         <MonoLabel className="text-gold-dim tracking-[0.2em] block mb-2">
-          Admin only
+          Open hosting
         </MonoLabel>
         <h1 className="font-display font-bold text-4xl md:text-5xl text-cream">
           HOST AN ARENA

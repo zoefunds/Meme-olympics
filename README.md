@@ -20,7 +20,9 @@ Base Sepolia, self-claimed straight into the winner's own wallet.
 There is **one wallet, one signer, for everything**: connecting it is how
 you log in (sign a free message, no password), it's what signs every
 GenLayer write (submit/host/dispute), and it's what funds/claims USDC on
-Base Sepolia. No email, no custodial key, nothing held on your behalf.
+Base Sepolia. When several browser wallets are installed, the app discovers
+them with EIP-6963 and lets the user choose the exact provider used for the
+whole flow. No email, no custodial key, nothing held on your behalf.
 
 ## Why two chains
 
@@ -111,6 +113,11 @@ sequenceDiagram
   message (no gas, no transaction) to prove ownership. First connect
   auto-creates your account. No email, no password, no custodial key
   anywhere — see [backend/src/routes/auth.ts](backend/src/routes/auth.ts).
+- **Multi-wallet safe provider selection** — the frontend uses EIP-6963 to
+  discover every compatible injected wallet and displays a chooser when
+  more than one extension is installed. The selected provider is passed
+  explicitly to login signing, GenLayer writes, Base Sepolia switching,
+  funding and reward claims; legacy `window.ethereum` is fallback-only.
 - **Optional display name** — set a username from Settings once connected;
   purely cosmetic, shown instead of a shortened address on leaderboards,
   submissions and the dashboard. Login itself stays wallet-only.
@@ -351,8 +358,10 @@ backend/
   src/services/baseSepolia.ts      # escrow relayer + reads
   src/lib/redis.ts                 # rate limiting, caching, distributed cron lock
 frontend/
+  src/components/WalletPicker.tsx        # EIP-6963 multi-wallet chooser
+  src/lib/walletProviders.ts             # provider discovery + selected-provider state
   src/lib/genlayer.ts               # GenLayer client signed by the connected wallet
-  src/lib/baseSepolia.ts            # raw EIP-1193 wallet + Base Sepolia tx helpers
+  src/lib/baseSepolia.ts            # selected EIP-1193 wallet + Base Sepolia tx helpers
   src/app/                          # Next.js 14 App Router pages, Aura Arena design system
 .github/workflows/uptime.yml       # 15-min health check with auto-filed issues
 milestone-v2.md                    # v2 milestone changelog (judging rubric, USDC payments, wallet auth)

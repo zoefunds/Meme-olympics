@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Space_Grotesk, Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { TopNav } from "@/components/Nav";
+import { WalletPicker } from "@/components/WalletPicker";
 
 const grotesk = Space_Grotesk({
   subsets: ["latin"],
@@ -52,6 +53,7 @@ export default function RootLayout({
       <body
         className={`${grotesk.variable} ${inter.variable} ${jetbrains.variable} font-body corner-glows min-h-screen`}
       >
+        <WalletPicker />
         <TopNav />
         <div className="pt-20 pb-20 md:pb-8">{children}</div>
       </body>

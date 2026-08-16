@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, setSession } from "@/lib/api";
-import { connectWallet, signMessage, hasInjectedWallet } from "@/lib/baseSepolia";
+import { connectWallet, signMessage, hasAvailableWallet } from "@/lib/baseSepolia";
 import { GlassCard, PrestigeButton, MonoLabel } from "@/components/ui";
 import { UsernamePromptModal } from "@/components/UsernamePromptModal";
 
@@ -15,7 +15,17 @@ export default function Login() {
   const [needsUsername, setNeedsUsername] = useState(false);
 
   useEffect(() => {
-    setHasWallet(hasInjectedWallet());
+    const detectWallet = () => void hasAvailableWallet().then(setHasWallet);
+    detectWallet();
+    // Some extensions inject window.ethereum after React has mounted.
+    // Re-check when MetaMask announces itself instead of permanently
+    // disabling the connect button based on the first render.
+    window.addEventListener("ethereum#initialized", detectWallet);
+    const fallback = window.setTimeout(detectWallet, 1000);
+    return () => {
+      window.removeEventListener("ethereum#initialized", detectWallet);
+      window.clearTimeout(fallback);
+    };
   }, []);
 
   async function connectAndSignIn() {
@@ -80,13 +90,14 @@ export default function Login() {
         {!hasWallet && (
           <p className="text-danger font-mono text-xs mb-6">
             No wallet extension detected. Install MetaMask (or another
-            browser wallet) to continue.
+            browser wallet), then refresh this page. On mobile, open this
+            site inside your wallet's browser.
           </p>
         )}
         {error && <p className="text-danger text-sm font-mono mb-4">{error}</p>}
         <PrestigeButton
           onClick={connectAndSignIn}
-          disabled={busy || !hasWallet}
+          disabled={busy}
           className="w-full"
         >
           {busy ? step || "WORKING…" : "CONNECT WALLET"}

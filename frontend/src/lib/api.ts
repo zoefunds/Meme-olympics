@@ -26,7 +26,13 @@ export function getUser(): {
 } | null {
   if (typeof window === "undefined") return null;
   const raw = localStorage.getItem("mo_user");
-  return raw ? JSON.parse(raw) : null;
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    clearSession();
+    return null;
+  }
 }
 
 /** Short "0x1234…abcd" form for display when there's no username. */
@@ -47,6 +53,7 @@ export async function api<T = any>(
   const res = await fetch(`${API_URL}${path}`, { ...options, headers });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
+    if (res.status === 401) throw new Error("AUTH_REQUIRED");
     throw new Error(body.error || `Request failed (${res.status})`);
   }
   return body as T;

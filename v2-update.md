@@ -329,3 +329,42 @@ to count consecutive `INVALID_IMAGE` failures per submission. The judging
 sweep in [backend/src/jobs/weekly.ts](backend/src/jobs/weekly.ts) now
 auto-disqualifies after `MAX_INVALID_IMAGE_ATTEMPTS = 3` attempts (~3
 minutes at one sweep per minute) instead of the old 15-minute window.
+
+---
+
+# 2026-08-16 addendum — open hosting and multi-wallet reliability
+
+## 13. Arena hosting opened to every authenticated wallet
+
+Removed the backend `requireAdmin` guard and the matching frontend role
+redirect from arena creation. Any authenticated wallet can now host the
+single active platform arena, subject to the existing 3-per-day anti-spam
+limit and the rule that the current arena must finalize before another can
+be created. Arena creation and opening remain signed by the host's wallet.
+
+## 14. Multiple injected wallet extensions no longer collide
+
+**Reported bug:** Connect Wallet did not open when several wallet extensions
+were enabled, but worked in an incognito profile where MetaMask was the only
+available provider.
+
+**Root cause:** the app used the legacy singleton `window.ethereum`. Multiple
+extensions can compete to populate or proxy that object, so the app could
+call a different provider from the wallet the user intended. A second issue
+disabled the Connect button permanently when injection happened after the
+first React effect.
+
+**Fix:** added EIP-6963 event-based provider discovery and a global wallet
+chooser. With multiple wallets installed, the user chooses one by name and
+icon; that exact provider is then reused for account access, login message
+signing, GenLayer network changes and writes, Base Sepolia changes, funding,
+and claims. `window.ethereum` remains a compatibility fallback when no
+EIP-6963 provider announces itself. Delayed injection is rechecked without
+permanently disabling Connect.
+
+## 15. Rewards failures are visible and recoverable
+
+The Rewards page previously swallowed every `/api/rewards/me` failure and
+looked like it never loaded. It now shows loading and error states, offers a
+retry action, clears malformed local sessions safely, and redirects expired
+JWT sessions to wallet login instead of leaving an empty page.

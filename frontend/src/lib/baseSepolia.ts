@@ -8,26 +8,16 @@
  * separate custodial signer anymore.
  */
 
+import { discoverWalletProviders, requestWalletProvider, Eip1193Provider } from "./walletProviders";
+
 const BASE_SEPOLIA_CHAIN_ID_HEX = "0x14a34"; // 84532
-
-type Eip1193Provider = {
-  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
-  on?: (event: string, cb: (...args: unknown[]) => void) => void;
-  removeListener?: (event: string, cb: (...args: unknown[]) => void) => void;
-};
-
-function getProvider(): Eip1193Provider {
-  const eth = (window as unknown as { ethereum?: Eip1193Provider }).ethereum;
-  if (!eth) {
-    throw new Error(
-      "No wallet found. Install MetaMask (or another browser wallet) to continue."
-    );
-  }
-  return eth;
-}
 
 export function hasInjectedWallet(): boolean {
   return typeof window !== "undefined" && Boolean((window as any).ethereum);
+}
+
+export async function hasAvailableWallet(): Promise<boolean> {
+  return (await discoverWalletProviders()).length > 0;
 }
 
 /** Requests account access. Pass `switchChain: false` for actions that
@@ -36,7 +26,7 @@ export function hasInjectedWallet(): boolean {
 export async function connectWallet(
   { switchChain = true }: { switchChain?: boolean } = {}
 ): Promise<string> {
-  const eth = getProvider();
+  const eth = await requestWalletProvider();
   const accounts = (await eth.request({ method: "eth_requestAccounts" })) as string[];
   if (!accounts?.[0]) throw new Error("No account returned by wallet");
   if (switchChain) await ensureBaseSepolia();
@@ -47,7 +37,7 @@ export async function connectWallet(
  * used for the wallet-connect login flow (sign-in-with-wallet), not a
  * transaction, costs no gas. */
 export async function signMessage(address: string, message: string): Promise<string> {
-  const eth = getProvider();
+  const eth = await requestWalletProvider();
   const signature = (await eth.request({
     method: "personal_sign",
     params: [message, address],
@@ -83,7 +73,7 @@ async function addBaseSepolia(eth: Eip1193Provider): Promise<void> {
  * chain and, if it still doesn't match, add the network explicitly and
  * retry the switch — regardless of whether the first attempt threw. */
 export async function ensureBaseSepolia(): Promise<void> {
-  const eth = getProvider();
+  const eth = await requestWalletProvider();
   if ((await currentChainId(eth)) === BASE_SEPOLIA_CHAIN_ID_HEX) return;
 
   try {
@@ -119,7 +109,7 @@ export interface EscrowTxStep {
  * only for the user's wallet to submit it (not for confirmation — the
  * caller can poll the backend or just tell the user to check their wallet). */
 export async function sendEscrowTx(step: EscrowTxStep): Promise<string> {
-  const eth = getProvider();
+  const eth = await requestWalletProvider();
   const accounts = (await eth.request({ method: "eth_accounts" })) as string[];
   const from = accounts?.[0];
   if (!from) throw new Error("Connect your wallet first");

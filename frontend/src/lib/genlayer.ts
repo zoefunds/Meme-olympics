@@ -10,27 +10,18 @@
 import { createClient } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
 import type { GenLayerClient } from "genlayer-js/types";
+import { getSelectedWalletProvider, requestWalletProvider, Eip1193Provider } from "./walletProviders";
 
 export const CONTRACT_ADDRESS = (process.env.NEXT_PUBLIC_GENLAYER_CONTRACT_ADDRESS ||
   "0xf363797335d66E6Af00502f43EDE872C5Fe19bCb") as `0x${string}`;
 
 const STUDIONET_CHAIN_ID_HEX = `0x${studionet.id.toString(16)}`;
 
-type EthereumProvider = {
-  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
-};
-
-function getProvider(): EthereumProvider {
-  const eth = (window as unknown as { ethereum?: EthereumProvider }).ethereum;
-  if (!eth) throw new Error("No wallet found. Install MetaMask to continue.");
-  return eth;
-}
-
-async function currentChainId(eth: EthereumProvider): Promise<string> {
+async function currentChainId(eth: Eip1193Provider): Promise<string> {
   return ((await eth.request({ method: "eth_chainId" })) as string).toLowerCase();
 }
 
-async function addStudioNetwork(eth: EthereumProvider): Promise<void> {
+async function addStudioNetwork(eth: Eip1193Provider): Promise<void> {
   await eth.request({
     method: "wallet_addEthereumChain",
     params: [
@@ -60,7 +51,7 @@ async function addStudioNetwork(eth: EthereumProvider): Promise<void> {
  * chain and, if it still doesn't match, add the network explicitly and
  * retry the switch — regardless of whether the first attempt threw. */
 export async function ensureStudioNetwork(): Promise<void> {
-  const eth = getProvider();
+  const eth = await requestWalletProvider();
   if ((await currentChainId(eth)) === STUDIONET_CHAIN_ID_HEX) return;
 
   try {
@@ -114,7 +105,12 @@ async function withBackoff<T>(
 export const readClient = createClient({ chain: studionet });
 
 export function getGenLayerClient(address: string): GenLayerClient<typeof studionet> {
-  return createClient({ chain: studionet, account: address as `0x${string}` });
+  const provider = getSelectedWalletProvider();
+  return createClient({
+    chain: studionet,
+    account: address as `0x${string}`,
+    ...(provider ? { provider } : {}),
+  });
 }
 
 /** Submits and waits for ACCEPTED. Re-asserts the network on every write:

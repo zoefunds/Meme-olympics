@@ -15,11 +15,13 @@ votes. One serious project, one robust contract.
   = "Aura Arena" (deep-space #131314, Olympic gold #FFD700, electric purple
   #7701D0, neon cyan #00F1FE; Space Grotesk / Inter / JetBrains Mono;
   glassmorphism, scanlines, segmented console progress bars).
-- **Auth**: email + password (JWT). Registration auto-creates an EVM wallet
-  (ethers), AES-256-GCM-encrypted in Postgres under `WALLET_ENCRYPTION_KEY` —
-  survives devices/reinstalls; export requires password re-check.
-- **Email**: Brevo REST API (`api.brevo.com/v3/smtp/email`) — password reset,
-  welcome, evaluation results, winner notifications. Sender: preciousmofeoluwa@gmail.com.
+- **Auth**: wallet-signature login with a single-use nonce and JWT session.
+  The connected wallet is the only user identity; there are no passwords,
+  emails, generated wallets, encrypted private keys, or custodial keys.
+- **Wallet discovery**: EIP-6963 enumerates multiple injected extensions and
+  presents a chooser. The selected EIP-1193 provider is explicitly reused
+  for login, GenLayer writes and Base Sepolia transactions;
+  `window.ethereum` is only the legacy fallback.
 - **Redis (Upstash)**: deliberately minimal to avoid maxing the quota — only
   rate-limit INCRs on sensitive routes and 60–120s leaderboard/competition
   caches; fail-open when unavailable. All Redis access lives in
@@ -39,7 +41,8 @@ votes. One serious project, one robust contract.
   evidence ⇒ auto-reject (never judge from user text alone).
 
 ## Lifecycle automation (backend, UTC)
-- Mon 00:05 rollover (opens the new official `week-YYYY-WW` arena on-chain)
+- No scheduled rollover or automatic arena creation. Any authenticated
+  wallet may host; only one arena may be active platform-wide at a time.
 - **Exact-time close**: each arena gets its own `setTimeout` armed at
   creation (and re-armed for every open arena on backend restart via
   `armPendingCloseTimers()`) that fires `close_submissions` the instant

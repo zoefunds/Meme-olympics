@@ -25,6 +25,7 @@ vi.mock("../services/genlayer", () => ({
   get openCompetitionOnChain() {
     return fakeGl.openCompetitionOnChain;
   },
+  setCompetitionDefaultsOnChain: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("../lib/logger", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -75,6 +76,23 @@ describe("POST /api/competitions (host-created arena)", () => {
     expect(res.status).toBe(201);
     const comp = await fakePrisma.competition.findUnique({ where: { id: res.body.competition.id } });
     expect(comp!.onchainCreated).toBeFalsy();
+  });
+
+  it("rejects a new arena while the current arena has not been finalized", async () => {
+    const endsAt = new Date(Date.now() + 3600_000).toISOString();
+    const first = await request(makeApp()).post("/api/competitions").send({
+      title: "Current Arena",
+      endsAt,
+    });
+    expect(first.status).toBe(201);
+
+    const second = await request(makeApp()).post("/api/competitions").send({
+      title: "Next Arena",
+      endsAt,
+    });
+
+    expect(second.status).toBe(409);
+    expect(second.body.error).toContain("wait for it to finalize");
   });
 });
 
