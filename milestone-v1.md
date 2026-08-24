@@ -1,4 +1,4 @@
-# Milestone v2 — Team Review Changelog
+# Milestone v1 — Team Review Changelog
 
 This documents everything changed since the last milestone review, in the
 order the underlying issues were actually found and fixed. Original
