@@ -14,7 +14,7 @@ right after migration.
 The GenLayer Intelligent Contract was redeployed at a new address:
 
 ```
-0x31E458C494FDFE74e3Fdd23e46009544074333Fa
+0x5e6ac07590509DD20fF3279692A8E8FD6a557563
 ```
 
 - Updated everywhere the previous address was configured: the `GENLAYER_CONTRACT_ADDRESS`
