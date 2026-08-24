@@ -1,4 +1,4 @@
-# v2 Update — August 8, 2026
+# v1 Update — August 8, 2026
 
 Changelog for everything changed today: a GenLayer contract migration (with
 a full production data reset), two production bugs found from real user
