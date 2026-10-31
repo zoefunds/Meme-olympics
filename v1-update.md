@@ -1,18 +1,22 @@
-# Release update — 2026-10-31
+# Production update — 2026-10-31
 
-This supersedes earlier source notes. The tested source includes three final
-settlement corrections, but the listed addresses remain the preceding live
-release until a coordinated GenLayer/Base migration is completed.
+This supersedes earlier source and migration notes. The tested settlement
+corrections are deployed at the addresses below.
 
 ## Deployment
 
 - GenLayer StudioNet contract:
-  `0x5BDD6676c2f3cc2e04356A61b6Fc9Cd621f1d023`
+  `0xeE76760172cbCD1ed33B41863b44AE8F74D2EE25`
 - Base Sepolia escrow:
-  `0x372582652fc0aa9407B426a8779ee92dA5859Cf8`
+  `0x951773259a9c90bE6DCfB5C9E4aedA9fBe89F10c`
 - Backend: https://meme-olympics-api-v2-gideon.fly.dev
 - Frontend: https://meme-olympics.vercel.app
 - Fly PostgreSQL: `meme-olympics-db-v2-gideon`
+- Base relayer/escrow owner:
+  `0x3ac70057A8Dd00Fcd590a6Bb59ce94D1222659dC`
+- GenLayer deployment transaction:
+  `0x21b6f80c042269a9ec3588ecf64170b4b08a6b89ed1a2cc58396635f802994d9`
+- Vercel production deployment: `dpl_5wN9RomA2Z8SZhpUuxccS1E49H4i`
 
 The Fly backend was recreated in the current account and switched to a fresh,
 least-privilege PostgreSQL attachment. Old database contents were intentionally

@@ -2,9 +2,8 @@
 
 Last verified: **2026-10-31**.
 
-This file contains current operational facts. The listed chain addresses run
-the preceding release; the repository head contains a tested contract update
-that still requires coordinated redeployment.
+This file contains current operational facts. Historical deployment addresses
+and retired architectures have deliberately been removed.
 
 ## Production
 
@@ -12,13 +11,15 @@ that still requires coordinated redeployment.
 - API: https://meme-olympics-api-v2-gideon.fly.dev
 - API health: https://meme-olympics-api-v2-gideon.fly.dev/health
 - GenLayer StudioNet contract:
-  `0x5BDD6676c2f3cc2e04356A61b6Fc9Cd621f1d023`
+  `0xeE76760172cbCD1ed33B41863b44AE8F74D2EE25`
 - Base Sepolia escrow:
-  `0x372582652fc0aa9407B426a8779ee92dA5859Cf8`
+  `0x951773259a9c90bE6DCfB5C9E4aedA9fBe89F10c`
 - Base Sepolia USDC:
   `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
 - Fly backend app: `meme-olympics-api-v2-gideon`
 - Fly PostgreSQL app: `meme-olympics-db-v2-gideon`
+- Base relayer/escrow owner:
+  `0x3ac70057A8Dd00Fcd590a6Bb59ce94D1222659dC`
 
 The backend has one always-on Fly machine (`min_machines_running=1`,
 `auto_stop_machines=false`). Cron work is Redis-locked and remains safe if the

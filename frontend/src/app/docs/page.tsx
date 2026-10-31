@@ -134,9 +134,9 @@ gl.vm.run_nondet_unsafe(leader_fn, validator_fn)`}</pre>
             provisional winner set before USDC allocations become claimable.
           </p>
           <p className="font-mono text-xs text-cyan-dim mt-5 break-all">
-            GenLayer: 0x5BDD6676c2f3cc2e04356A61b6Fc9Cd621f1d023
+            GenLayer: 0xeE76760172cbCD1ed33B41863b44AE8F74D2EE25
             <br />
-            Base escrow: 0x372582652fc0aa9407B426a8779ee92dA5859Cf8
+            Base escrow: 0x951773259a9c90bE6DCfB5C9E4aedA9fBe89F10c
           </p>
         </GlassCard>
       </section>

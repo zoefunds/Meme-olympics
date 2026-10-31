@@ -8,7 +8,7 @@ import { localnet } from "genlayer-js/chains";
 
 const local = dotenv.parse(readFileSync(resolve(process.cwd(), ".env")));
 const production = dotenv.parse(readFileSync(resolve(process.cwd(), ".env.production")));
-const genlayerAddress = "0x5BDD6676c2f3cc2e04356A61b6Fc9Cd621f1d023" as `0x${string}`;
+const genlayerAddress = required(production, "GENLAYER_CONTRACT_ADDRESS") as `0x${string}`;
 
 function required(source: Record<string, string>, name: string) {
   const value = source[name];

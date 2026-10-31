@@ -81,14 +81,10 @@ All suites pass in the submitted state.
 
 ## Current production deployment
 
-These addresses are the preceding live release. The source in this commit has
-passed all suites but requires a coordinated replacement of both contracts
-and their backend/frontend addresses before it is live.
-
 - App: https://meme-olympics.vercel.app
 - API: https://meme-olympics-api-v2-gideon.fly.dev
-- GenLayer: `0x5BDD6676c2f3cc2e04356A61b6Fc9Cd621f1d023`
-- Base escrow: `0x372582652fc0aa9407B426a8779ee92dA5859Cf8`
+- GenLayer: `0xeE76760172cbCD1ed33B41863b44AE8F74D2EE25`
+- Base escrow: `0x951773259a9c90bE6DCfB5C9E4aedA9fBe89F10c`
 - Base Sepolia USDC: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
 
 The production backend and PostgreSQL health checks pass. The production chain

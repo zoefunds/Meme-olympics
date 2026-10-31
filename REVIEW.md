@@ -1,8 +1,7 @@
 # Steward review remediation
 
-Status: **implemented and tested on 2026-10-31; coordinated GenLayer/Base
-redeployment pending**. The production addresses below still run the preceding
-release and must not be described as containing the final three fixes.
+Status: **implemented, tested, deployed, and production-switched on
+2026-10-31**.
 
 This document maps every material issue from the milestone review to its
 current implementation and verification evidence.
@@ -90,11 +89,9 @@ claimable state, and winner USDC balance increase. Instructions are in
 - Frontend production build: passing
 - API health: https://meme-olympics-api-v2-gideon.fly.dev/health
 - Live app: https://meme-olympics.vercel.app
-- Currently live GenLayer contract (preceding release):
-  `0x5BDD6676c2f3cc2e04356A61b6Fc9Cd621f1d023`
-- Currently live Base escrow (preceding release):
-  `0x372582652fc0aa9407B426a8779ee92dA5859Cf8`
+- GenLayer contract: `0xeE76760172cbCD1ed33B41863b44AE8F74D2EE25`
+- Base escrow: `0x951773259a9c90bE6DCfB5C9E4aedA9fBe89F10c`
 
-The live verification script for the preceding release confirms that the configured GenLayer operator is
+The live verification script confirms that the configured GenLayer operator is
 the contract owner/admin and that the configured Base escrow has deployed
 bytecode with the expected owner, relayer, and Circle Base Sepolia USDC.

@@ -15,6 +15,7 @@ const productionEnv = existsSync(".env.production")
 
 const appName = process.env.FLY_APP_NAME || "meme-olympics-api-v2-gideon";
 const escrowAddress = required("MEME_OLYMPICS_ESCROW_ADDRESS");
+const genlayerAddress = required("GENLAYER_CONTRACT_ADDRESS", true);
 const chainOnly = process.argv.includes("--chain-only");
 
 const requiredChainSecrets = [
@@ -60,7 +61,7 @@ const optionalRuntimeSecrets = [
 // the connection secret without exposing or accidentally overwriting it.
 
 const values = [
-  "GENLAYER_CONTRACT_ADDRESS=0x5BDD6676c2f3cc2e04356A61b6Fc9Cd621f1d023",
+  `GENLAYER_CONTRACT_ADDRESS=${genlayerAddress}`,
   `MEME_OLYMPICS_ESCROW_ADDRESS=${escrowAddress}`,
   `PUBLIC_URL=https://${appName}.fly.dev`,
   ...requiredChainSecrets.map((key) => `${key}=${required(key)}`),

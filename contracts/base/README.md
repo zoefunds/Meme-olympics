@@ -6,7 +6,7 @@ amounts but never escrows real value. This contract holds real USDC and
 lets winners self-claim.
 
 Current Base Sepolia deployment:
-`0x372582652fc0aa9407B426a8779ee92dA5859Cf8`.
+`0x951773259a9c90bE6DCfB5C9E4aedA9fBe89F10c`.
 
 This settlement-safe version changes `setWinners` and `getPool` and adds
 per-pool claim timing. Never point the current relayer ABI at a retired escrow.
@@ -28,7 +28,7 @@ the protected local env before funding/deploying and never prints it.
 Copy the deployed address into `backend/.env`:
 
 ```
-MEME_OLYMPICS_ESCROW_ADDRESS=0x372582652fc0aa9407B426a8779ee92dA5859Cf8
+MEME_OLYMPICS_ESCROW_ADDRESS=0x951773259a9c90bE6DCfB5C9E4aedA9fBe89F10c
 ```
 
 ## How money flows
