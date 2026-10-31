@@ -11,7 +11,7 @@ and retired architectures have deliberately been removed.
 - API: https://meme-olympics-api-v2-gideon.fly.dev
 - API health: https://meme-olympics-api-v2-gideon.fly.dev/health
 - GenLayer StudioNet contract:
-  `0xeE76760172cbCD1ed33B41863b44AE8F74D2EE25`
+  `0x9Dd95B81a12C4Fa7fB371F678Eb7fa9FC59ee80F`
 - Base Sepolia escrow:
   `0x951773259a9c90bE6DCfB5C9E4aedA9fBe89F10c`
 - Base Sepolia USDC:
@@ -20,10 +20,10 @@ and retired architectures have deliberately been removed.
 - Fly PostgreSQL app: `meme-olympics-db-v2-gideon`
 - Base relayer/escrow owner:
   `0x3ac70057A8Dd00Fcd590a6Bb59ce94D1222659dC`
-- Production source commit: `bfd56a5`
-- Vercel production deployment: `dpl_5wN9RomA2Z8SZhpUuxccS1E49H4i`
+- Production source commit: `2cd8f68`
+- Vercel production deployment: `dpl_Ay7fQDEsvW8m6mdEy4bTmisrkCss`
 - GenLayer deployment transaction:
-  `0x21b6f80c042269a9ec3588ecf64170b4b08a6b89ed1a2cc58396635f802994d9`
+  `0xf57597f5776935f22b6f5be08404763faf5ffed2eee88bd89b0e37f9a14f432b`
 
 The backend has one always-on Fly machine (`min_machines_running=1`,
 `auto_stop_machines=false`). Cron work is Redis-locked and remains safe if the
@@ -58,7 +58,10 @@ not migrated.
    backend never custodies prize money.
 10. The relay re-reads winners from GenLayer immediately before Base
     allocation. Repeatedly undecodable images become terminal only through the
-    contract's admin-only, reason-bearing recovery call.
+    contract's owner-only, reason-bearing recovery call.
+11. Terminal image recovery requires three distinct failed evaluation
+    transaction hashes committed on-chain. Partial Base recovery verifies the
+    original allocation calldata and reconciles any intervening claim events.
 
 ## Contract authority
 
@@ -97,7 +100,7 @@ cd ../../frontend
 npm run build
 ```
 
-Current verified counts: backend **29/29**, GenLayer lifecycle **4/4**, Base
+Current verified counts: backend **32/32**, GenLayer lifecycle **4/4**, Base
 escrow **3/3**.
 
 ## Operational rules

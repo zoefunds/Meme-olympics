@@ -6,7 +6,7 @@ corrections are deployed at the addresses below.
 ## Deployment
 
 - GenLayer StudioNet contract:
-  `0xeE76760172cbCD1ed33B41863b44AE8F74D2EE25`
+  `0x9Dd95B81a12C4Fa7fB371F678Eb7fa9FC59ee80F`
 - Base Sepolia escrow:
   `0x951773259a9c90bE6DCfB5C9E4aedA9fBe89F10c`
 - Backend: https://meme-olympics-api-v2-gideon.fly.dev
@@ -15,8 +15,8 @@ corrections are deployed at the addresses below.
 - Base relayer/escrow owner:
   `0x3ac70057A8Dd00Fcd590a6Bb59ce94D1222659dC`
 - GenLayer deployment transaction:
-  `0x21b6f80c042269a9ec3588ecf64170b4b08a6b89ed1a2cc58396635f802994d9`
-- Vercel production deployment: `dpl_5wN9RomA2Z8SZhpUuxccS1E49H4i`
+  `0xf57597f5776935f22b6f5be08404763faf5ffed2eee88bd89b0e37f9a14f432b`
+- Vercel production deployment: `dpl_Ay7fQDEsvW8m6mdEy4bTmisrkCss`
 
 The Fly backend was recreated in the current account and switched to a fresh,
 least-privilege PostgreSQL attachment. Old database contents were intentionally
@@ -45,7 +45,12 @@ attach` so the deploy script cannot overwrite it with a local or retired URL.
 - settlement re-reads authoritative post-dispute winners instead of cached
   finalization JSON;
 - repeated `INVALID_IMAGE` reaches an audited terminal on-chain
-  disqualification before the database mirrors it.
+  disqualification before the database mirrors it;
+- three distinct failed evaluation transaction hashes are required and stored
+  before terminal image disqualification, and only the contract owner may
+  execute that terminal transition;
+- partial Base recovery verifies original allocation calldata and accounts
+  for claims completed before the GenLayer marker retry.
 
 ## Deployment tooling
 
@@ -60,7 +65,7 @@ attach` so the deploy script cannot overwrite it with a local or retired URL.
 
 ## Verified results
 
-- Backend: 29/29 tests
+- Backend: 32/32 tests
 - GenLayer lifecycle: 4/4 tests
 - Base escrow: 3/3 tests
 - Frontend: production build successful
@@ -68,4 +73,4 @@ attach` so the deploy script cannot overwrite it with a local or retired URL.
 - Fly PostgreSQL checks: 3/3 passing
 - Vercel production deployment: ready and aliased
 - Live chain ownership/configuration audit: passing
-- Production source commit `bfd56a5`: pushed to `main`
+- Production source commit `2cd8f68`: pushed to `main`

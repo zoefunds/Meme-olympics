@@ -5,15 +5,16 @@ in real USDC on Base Sepolia — not likes, not votes, only logic.**
 
 - **Live app:** https://meme-olympics.vercel.app
 - **API:** https://meme-olympics-api-v2-gideon.fly.dev (Fly.io, 24/7)
-- **GenLayer Intelligent Contract (StudioNet):** `0xeE76760172cbCD1ed33B41863b44AE8F74D2EE25`
+- **GenLayer Intelligent Contract (StudioNet):** `0x9Dd95B81a12C4Fa7fB371F678Eb7fa9FC59ee80F`
 - **MemeOlympicsEscrow (Base Sepolia):** `0x951773259a9c90bE6DCfB5C9E4aedA9fBe89F10c`
 - **USDC (Base Sepolia, Circle official):** `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
 
 These are the current production contracts containing the settlement
 corrections documented in [REVIEW.md](REVIEW.md).
 
-Current production release: Git commit `bfd56a5`, Vercel deployment
-`dpl_5wN9RomA2Z8SZhpUuxccS1E49H4i`, deployed and verified on 2026-10-31.
+Current production application release: Git commit `2cd8f68`, deployed and
+verified on 2026-10-31. Vercel deployment:
+`dpl_Ay7fQDEsvW8m6mdEy4bTmisrkCss`.
 
 Anyone can host an arena — set a theme, a deadline, and an optional real
 USDC prize pool. Anyone can submit one meme per arena. When an arena's
@@ -187,6 +188,9 @@ sequenceDiagram
   their own wallet. The backend never custodies a cent.
   Immediately before allocation, the worker re-reads the winner list from
   GenLayer, so an upheld challenge cannot leave a stale cached recipient.
+  If allocation succeeded but the GenLayer marker failed, recovery verifies
+  the original `setWinners` calldata and accounts for `Claimed` events, so a
+  winner claiming before the retry cannot break reconciliation.
 - **USDC balance dashboard** — Settings and Rewards both show your real
   wallet USDC balance on Base Sepolia, what you've won but isn't relayed
   yet, and what's actually claimable right now — tracked per-competition
@@ -340,13 +344,16 @@ funding/claim flow. Highlights:
 - **Judging self-heals from a rejected image** — if the AI judge repeatedly
   rejects a submission's image outright (`INVALID_IMAGE`, typically a
   plain, unedited photo of a real person with no meme-format framing), the
-  judging sweep now submits an admin-only, reason-bearing terminal
+  judging sweep now submits an owner-only, reason-bearing terminal
   disqualification on GenLayer after 3 consecutive attempts and confirms it
   before changing PostgreSQL
   (~3 minutes, one sweep per minute — counted per submission, not by
   elapsed time) instead of leaving it stuck and silently blocking that
   arena's finalization
   forever. See [v1-update.md](v1-update.md).
+  Each attempt must expose a distinct failed evaluation transaction hash,
+  committed on-chain and visible in submission state; three commitments are
+  required before terminal disqualification is authorized.
 
 ## Automation (UTC)
 

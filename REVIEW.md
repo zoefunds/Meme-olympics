@@ -26,6 +26,11 @@ judging all fail at the contract boundary. The suite also proves that a
 repeatedly undecodable image can be terminally disqualified on-chain and the
 arena can then finalize. Current result: **4/4 passing**.
 
+The exceptional recovery path stores three distinct failed evaluation
+transaction hashes in contract state. Duplicate or missing evidence is
+rejected, delegated admins cannot execute the terminal transition, and the
+owner's final reason and evidence count are retained in the audit log.
+
 ## 2. Challenge-safe settlement
 
 Finalization creates provisional winners and a contract-derived 24-hour
@@ -51,7 +56,10 @@ Current result: **3/3 passing**.
 Immediately before Base allocation, the worker re-reads the authoritative
 GenLayer winners, reconciles its database cache, and pays that list. An upheld
 post-finalization dispute therefore changes the Base recipient rather than
-leaving the original cached finalist in place.
+leaving the original cached finalist in place. Partial-success recovery also
+decodes the immutable original `setWinners` calldata and reconciles current
+claimable balances plus `Claimed` events, including claims made before the
+GenLayer marker retry.
 
 ## 3. Partial cross-chain recovery
 
@@ -60,9 +68,11 @@ handles the case where Base `setWinners` succeeds but the subsequent GenLayer
 relay marker fails. A retry now:
 
 1. reads the existing Base pool;
-2. verifies total allocation, claim deadline, winners, and per-winner balances;
-3. locates the original `WinnersSet` event transaction;
-4. returns that transaction hash and retries only the GenLayer marker.
+2. verifies total allocation and the authoritative claim deadline;
+3. locates the original `WinnersSet` transaction and decodes its calldata;
+4. proves each original award equals current claimable plus matching
+   `Claimed` events;
+5. returns that transaction hash and retries only the GenLayer marker.
 
 It never blindly resends the one-time Base allocation.
 
@@ -83,17 +93,17 @@ claimable state, and winner USDC balance increase. Instructions are in
 
 ## 6. Verification and production evidence
 
-- Backend Vitest suite: **29/29 passing**
+- Backend Vitest suite: **32/32 passing**
 - GenLayer adversarial lifecycle tests: **4/4 passing**
 - Foundry escrow tests: **3/3 passing**
 - Frontend production build: passing
 - API health: https://meme-olympics-api-v2-gideon.fly.dev/health
 - Live app: https://meme-olympics.vercel.app
-- Production source commit: `bfd56a5`
-- Vercel deployment: `dpl_5wN9RomA2Z8SZhpUuxccS1E49H4i`
-- GenLayer contract: `0xeE76760172cbCD1ed33B41863b44AE8F74D2EE25`
+- Production source commit: `2cd8f68`
+- Vercel deployment: `dpl_Ay7fQDEsvW8m6mdEy4bTmisrkCss`
+- GenLayer contract: `0x9Dd95B81a12C4Fa7fB371F678Eb7fa9FC59ee80F`
 - GenLayer deployment transaction:
-  `0x21b6f80c042269a9ec3588ecf64170b4b08a6b89ed1a2cc58396635f802994d9`
+  `0xf57597f5776935f22b6f5be08404763faf5ffed2eee88bd89b0e37f9a14f432b`
 - Base escrow: `0x951773259a9c90bE6DCfB5C9E4aedA9fBe89F10c`
 - Base owner/relayer: `0x3ac70057A8Dd00Fcd590a6Bb59ce94D1222659dC`
 
