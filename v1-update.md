@@ -51,6 +51,9 @@ attach` so the deploy script cannot overwrite it with a local or retired URL.
   execute that terminal transition;
 - partial Base recovery verifies original allocation calldata and accounts
   for claims completed before the GenLayer marker retry.
+- validator transient failures are fail-closed rather than accepted as
+  agreement when independent re-evaluation did not complete;
+- CI now runs backend, frontend, GenLayer contract/policy, and Foundry jobs.
 
 ## Deployment tooling
 
@@ -67,7 +70,7 @@ attach` so the deploy script cannot overwrite it with a local or retired URL.
 
 - Backend: 32/32 tests
 - Claim-aware Base reconciliation regression tests: passing
-- GenLayer lifecycle: 4/4 tests
+- GenLayer contract: 6/6 tests (4 lifecycle + 2 validator-policy)
 - Base escrow: 3/3 tests
 - Frontend: production build successful
 - Fly API check: passing

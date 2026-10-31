@@ -48,6 +48,10 @@ Each failure must carry a distinct failed evaluation transaction hash. The
 contract stores all three commitments and exposes them through
 `get_submission`; duplicate or missing evidence cannot authorize the terminal
 transition.
+The contract cannot query historical receipt execution to independently prove
+that a committed hash belongs to the submission. The three public commitments
+and owner-only terminal action make that remaining testnet operator-trust
+boundary explicit and auditable.
 
 ### Cross-chain reconciliation
 
@@ -80,12 +84,14 @@ pool before displaying the arena as funded.
 - `backend`: 32 Vitest tests
 - `backend/src/services/baseSepolia.test.ts`: claimed-before-marker recovery
   and inconsistent-claim-history rejection
-- `contracts/tests/test_lifecycle_guards.py`: 4 adversarial GenLayer tests
+- `contracts/tests`: 6 GenLayer tests (4 lifecycle + 2 validator-policy)
 - `contracts/base/test/MemeOlympicsEscrow.t.sol`: 3 Foundry escrow tests
 - `contracts/base/e2e-example.js`: funded allocation and successful claim
   example for Base Sepolia
 
 All suites pass in the submitted state.
+The four-job GitHub Actions CI workflow reruns backend, frontend, GenLayer,
+and Foundry verification on pushes and pull requests.
 
 ## Current production deployment
 

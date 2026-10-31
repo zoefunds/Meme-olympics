@@ -63,6 +63,11 @@ not migrated.
     transaction hashes committed on-chain. Partial Base recovery verifies the
     original allocation calldata and reconciles any intervening claim events.
 
+The evidence hashes are operator-submitted commitments. The contract enforces
+three distinct formatted hashes, the correct lifecycle/status, and owner-only
+terminal authorization, but cannot independently query transaction history to
+prove receipt linkage. Treat this as an explicit testnet trust boundary.
+
 ## Contract authority
 
 - Users sign login, arena creation/opening, meme submission, dispute opening,
@@ -100,11 +105,13 @@ cd ../../frontend
 npm run build
 ```
 
-Current verified counts: backend **32/32**, GenLayer lifecycle **4/4**, Base
-escrow **3/3**.
+Current verified counts: backend **32/32**, GenLayer contract **6/6** (4
+lifecycle + 2 validator-policy), Base escrow **3/3**.
 
 The backend total includes claim-aware reconciliation coverage for a winner
 who claims before GenLayer marker recovery and for inconsistent claim history.
+The repository CI runs backend, frontend, GenLayer, and Foundry verification
+on pushes to `main`, pull requests, and manual dispatch.
 
 ## Operational rules
 

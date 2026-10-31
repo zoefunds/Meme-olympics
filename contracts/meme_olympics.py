@@ -26,7 +26,8 @@ from genlayer import *
 # Validators use these to decide how to compare failures:
 #   EXPECTED  — deterministic business-logic failures; exact match required
 #   EXTERNAL  — external API 4xx-style failures; exact match required
-#   TRANSIENT — network/5xx flakiness; validators agree if both are transient
+#   TRANSIENT — network/5xx flakiness; never accepted as agreement, so the
+#               operation retries under a fresh leader/validator execution
 #   LLM       — LLM misbehaviour; validators always disagree, forcing leader
 #               rotation instead of locking bad state on-chain
 # ----------------------------------------------------------------------------
@@ -537,9 +538,9 @@ class MemeOlympics(gl.Contract):
     def _handle_leader_error(leaders_res, leader_fn) -> bool:
         """Canonical validator-side comparison when the leader errored.
 
-        Deterministic errors must match exactly; transient errors agree if
-        both sides are transient; LLM/unknown errors force disagreement so
-        consensus rotates the leader instead of persisting garbage.
+        Deterministic errors must match exactly. Transient, LLM and unknown
+        errors always force disagreement so consensus rotates/retries instead
+        of accepting a result whose independent verification was incomplete.
         """
         leader_msg = getattr(leaders_res, "message", "") or ""
         try:
@@ -551,10 +552,6 @@ class MemeOlympics(gl.Contract):
                 ERROR_EXTERNAL
             ):
                 return validator_msg == leader_msg
-            if validator_msg.startswith(ERROR_TRANSIENT) and leader_msg.startswith(
-                ERROR_TRANSIENT
-            ):
-                return True
             return False
         except Exception:
             return False
@@ -1180,9 +1177,10 @@ Return ONLY a JSON object exactly like:
                 mine = leader_fn()
             except gl.vm.UserError as exc:
                 msg = getattr(exc, "message", None) or str(exc)
-                # Leader succeeded but validator hit transient trouble:
-                # accept the leader rather than rotating for network noise.
-                return msg.startswith(ERROR_TRANSIENT)
+                # A successful leader result is never accepted without an
+                # independently completed validator evaluation. Transient
+                # network trouble rotates/retries instead of bypassing review.
+                return False
             except Exception:
                 return False
 
@@ -1755,8 +1753,7 @@ Return ONLY JSON: {{"uphold": true/false, "confidence": 0-100, "summary": "1-2 s
             try:
                 mine = leader_fn()
             except gl.vm.UserError as exc:
-                msg = getattr(exc, "message", None) or str(exc)
-                return msg.startswith(ERROR_TRANSIENT)
+                return False
             except Exception:
                 return False
 

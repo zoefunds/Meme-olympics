@@ -30,6 +30,15 @@ The exceptional recovery path stores three distinct failed evaluation
 transaction hashes in contract state. Duplicate or missing evidence is
 rejected, delegated admins cannot execute the terminal transition, and the
 owner's final reason and evidence count are retained in the audit log.
+These hashes are evidence commitments, not a receipt oracle: the contract
+cannot independently query historical transaction execution to prove linkage
+to the submission. Owner-only authorization and public commitments reduce and
+expose the trust assumption but do not remove it.
+
+Validator transient failures are fail-closed. A validator that cannot finish
+its independent evaluation rejects a successful leader result, and two
+transient failures are not treated as substantive agreement. Static policy
+tests protect both invariants.
 
 ## 2. Challenge-safe settlement
 
@@ -98,7 +107,7 @@ claimable state, and winner USDC balance increase. Instructions are in
 ## 6. Verification and production evidence
 
 - Backend Vitest suite: **32/32 passing**
-- GenLayer adversarial lifecycle tests: **4/4 passing**
+- GenLayer contract tests: **6/6 passing** (4 lifecycle + 2 validator policy)
 - Foundry escrow tests: **3/3 passing**
 - Frontend production build: passing
 - API health: https://meme-olympics-api-v2-gideon.fly.dev/health
@@ -110,6 +119,8 @@ claimable state, and winner USDC balance increase. Instructions are in
   `0xf57597f5776935f22b6f5be08404763faf5ffed2eee88bd89b0e37f9a14f432b`
 - Base escrow: `0x951773259a9c90bE6DCfB5C9E4aedA9fBe89F10c`
 - Base owner/relayer: `0x3ac70057A8Dd00Fcd590a6Bb59ce94D1222659dC`
+- CI: backend, frontend, GenLayer, and Foundry jobs in
+  [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
 
 The live verification script confirms that the configured GenLayer operator is
 the contract owner/admin and that the configured Base escrow has deployed

@@ -356,6 +356,11 @@ funding/claim flow. Highlights:
   Each attempt must expose a distinct failed evaluation transaction hash,
   committed on-chain and visible in submission state; three commitments are
   required before terminal disqualification is authorized.
+  Trust boundary: the contract validates format, uniqueness, count, pending
+  status, judging state, and owner authorization, but cannot independently
+  query GenLayer receipt history to prove each submitted hash belongs to that
+  submission. The commitments make operator claims durable and auditable;
+  they do not eliminate operator trust.
 
 ## Automation (UTC)
 
@@ -366,6 +371,14 @@ funding/claim flow. Highlights:
 | Every minute | Fallback close sweep + judge/finalize sweep (both Redis-locked) |
 | Every 2 min | Prize relay sweep — after the challenge period, pushes any finalized-but-unrelayed competition's winners to Base Sepolia (Redis-locked) |
 | Every 15 min | Uptime check (GitHub Actions) — API `/health` + frontend |
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push to `main`, every pull request,
+and manual dispatch. Independent jobs run all backend tests/type checks/build,
+the frontend production build, GenLayer lifecycle and validator-policy tests,
+and Foundry escrow tests. Dependency caches and pinned GenLayer test packages
+keep the workflow reproducible.
 
 ## Repository layout
 
@@ -411,7 +424,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8080 npm run dev  # :3000
 ## Testing
 
 ```bash
-cd backend && npm test   # vitest — 27 tests, in-memory fake Prisma + fake GenLayer service
+cd backend && npm test   # vitest — 32 tests, in-memory fake Prisma + fake GenLayer service
 ```
 
 Covers the payout-critical lifecycle: no early close/scoring before a
