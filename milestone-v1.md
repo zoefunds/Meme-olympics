@@ -97,12 +97,12 @@ and Foundry verification on pushes and pull requests.
 
 - App: https://meme-olympics.vercel.app
 - API: https://meme-olympics-api-v2-gideon.fly.dev
-- GenLayer: `0x9Dd95B81a12C4Fa7fB371F678Eb7fa9FC59ee80F`
+- GenLayer: `0xC91AA2316235D6a1cCd6804Ad1cC85D29E6F14ea`
 - Base escrow: `0x951773259a9c90bE6DCfB5C9E4aedA9fBe89F10c`
 - Base Sepolia USDC: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
 - Base owner/relayer: `0x3ac70057A8Dd00Fcd590a6Bb59ce94D1222659dC`
 - Production source commit: `2cd8f68`
-- Vercel deployment: `dpl_Ay7fQDEsvW8m6mdEy4bTmisrkCss`
+- Vercel deployment: `dpl_Bufb6vHTnJH44JPsx2e1WMjrnmUM`
 
 The production backend and PostgreSQL health checks pass. The production chain
 verification confirms GenLayer owner/admin authority and Base escrow

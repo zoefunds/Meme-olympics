@@ -5,7 +5,7 @@ in real USDC on Base Sepolia — not likes, not votes, only logic.**
 
 - **Live app:** https://meme-olympics.vercel.app
 - **API:** https://meme-olympics-api-v2-gideon.fly.dev (Fly.io, 24/7)
-- **GenLayer Intelligent Contract (StudioNet):** `0x9Dd95B81a12C4Fa7fB371F678Eb7fa9FC59ee80F`
+- **GenLayer Intelligent Contract (StudioNet):** `0xC91AA2316235D6a1cCd6804Ad1cC85D29E6F14ea`
 - **MemeOlympicsEscrow (Base Sepolia):** `0x951773259a9c90bE6DCfB5C9E4aedA9fBe89F10c`
 - **USDC (Base Sepolia, Circle official):** `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
 
@@ -14,7 +14,7 @@ corrections documented in [REVIEW.md](REVIEW.md).
 
 Current production application release: Git commit `2cd8f68`, deployed and
 verified on 2026-10-31. Vercel deployment:
-`dpl_Ay7fQDEsvW8m6mdEy4bTmisrkCss`.
+`dpl_Bufb6vHTnJH44JPsx2e1WMjrnmUM`.
 
 Anyone can host an arena — set a theme, a deadline, and an optional real
 USDC prize pool. Anyone can submit one meme per arena. When an arena's

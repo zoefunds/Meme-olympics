@@ -11,7 +11,7 @@ and retired architectures have deliberately been removed.
 - API: https://meme-olympics-api-v2-gideon.fly.dev
 - API health: https://meme-olympics-api-v2-gideon.fly.dev/health
 - GenLayer StudioNet contract:
-  `0x9Dd95B81a12C4Fa7fB371F678Eb7fa9FC59ee80F`
+  `0xC91AA2316235D6a1cCd6804Ad1cC85D29E6F14ea`
 - Base Sepolia escrow:
   `0x951773259a9c90bE6DCfB5C9E4aedA9fBe89F10c`
 - Base Sepolia USDC:
@@ -21,9 +21,9 @@ and retired architectures have deliberately been removed.
 - Base relayer/escrow owner:
   `0x3ac70057A8Dd00Fcd590a6Bb59ce94D1222659dC`
 - Production source commit: `2cd8f68`
-- Vercel production deployment: `dpl_Ay7fQDEsvW8m6mdEy4bTmisrkCss`
+- Vercel production deployment: `dpl_Bufb6vHTnJH44JPsx2e1WMjrnmUM`
 - GenLayer deployment transaction:
-  `0xf57597f5776935f22b6f5be08404763faf5ffed2eee88bd89b0e37f9a14f432b`
+  `0xaee194c6473854ae28e81596570bb566f56ce9fd61cad3f39a1ad2e01c941db4`
 
 The backend has one always-on Fly machine (`min_machines_running=1`,
 `auto_stop_machines=false`). Cron work is Redis-locked and remains safe if the

@@ -6,7 +6,7 @@ corrections are deployed at the addresses below.
 ## Deployment
 
 - GenLayer StudioNet contract:
-  `0x9Dd95B81a12C4Fa7fB371F678Eb7fa9FC59ee80F`
+  `0xC91AA2316235D6a1cCd6804Ad1cC85D29E6F14ea`
 - Base Sepolia escrow:
   `0x951773259a9c90bE6DCfB5C9E4aedA9fBe89F10c`
 - Backend: https://meme-olympics-api-v2-gideon.fly.dev
@@ -15,8 +15,8 @@ corrections are deployed at the addresses below.
 - Base relayer/escrow owner:
   `0x3ac70057A8Dd00Fcd590a6Bb59ce94D1222659dC`
 - GenLayer deployment transaction:
-  `0xf57597f5776935f22b6f5be08404763faf5ffed2eee88bd89b0e37f9a14f432b`
-- Vercel production deployment: `dpl_Ay7fQDEsvW8m6mdEy4bTmisrkCss`
+  `0xaee194c6473854ae28e81596570bb566f56ce9fd61cad3f39a1ad2e01c941db4`
+- Vercel production deployment: `dpl_Bufb6vHTnJH44JPsx2e1WMjrnmUM`
 
 The Fly backend was recreated in the current account and switched to a fresh,
 least-privilege PostgreSQL attachment. Old database contents were intentionally

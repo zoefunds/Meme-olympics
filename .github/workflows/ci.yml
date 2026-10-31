@@ -44,7 +44,7 @@ jobs:
       - run: npm run build
         env:
           NEXT_PUBLIC_API_URL: https://meme-olympics-api-v2-gideon.fly.dev
-          NEXT_PUBLIC_GENLAYER_CONTRACT_ADDRESS: 0x9Dd95B81a12C4Fa7fB371F678Eb7fa9FC59ee80F
+          NEXT_PUBLIC_GENLAYER_CONTRACT_ADDRESS: 0xC91AA2316235D6a1cCd6804Ad1cC85D29E6F14ea
 
   genlayer-contract:
     runs-on: ubuntu-latest

@@ -113,10 +113,10 @@ claimable state, and winner USDC balance increase. Instructions are in
 - API health: https://meme-olympics-api-v2-gideon.fly.dev/health
 - Live app: https://meme-olympics.vercel.app
 - Production source commit: `2cd8f68`
-- Vercel deployment: `dpl_Ay7fQDEsvW8m6mdEy4bTmisrkCss`
-- GenLayer contract: `0x9Dd95B81a12C4Fa7fB371F678Eb7fa9FC59ee80F`
+- Vercel deployment: `dpl_Bufb6vHTnJH44JPsx2e1WMjrnmUM`
+- GenLayer contract: `0xC91AA2316235D6a1cCd6804Ad1cC85D29E6F14ea`
 - GenLayer deployment transaction:
-  `0xf57597f5776935f22b6f5be08404763faf5ffed2eee88bd89b0e37f9a14f432b`
+  `0xaee194c6473854ae28e81596570bb566f56ce9fd61cad3f39a1ad2e01c941db4`
 - Base escrow: `0x951773259a9c90bE6DCfB5C9E4aedA9fBe89F10c`
 - Base owner/relayer: `0x3ac70057A8Dd00Fcd590a6Bb59ce94D1222659dC`
 - CI: backend, frontend, GenLayer, and Foundry jobs in
