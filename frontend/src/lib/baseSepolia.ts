@@ -129,3 +129,34 @@ export async function sendEscrowTxSequence(steps: EscrowTxStep[]): Promise<strin
   }
   return hashes;
 }
+
+/** Wait for the Base RPC receipt and verify that the successful transaction
+ * actually targeted the configured escrow. Wallet submission alone is not a
+ * funding confirmation: it may be dropped or revert after the popup closes. */
+export async function verifyEscrowDepositReceipt(
+  txHash: string,
+  escrowAddress: string,
+  timeoutMs = 180_000
+): Promise<void> {
+  const eth = await requestWalletProvider();
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const receipt = (await eth.request({
+      method: "eth_getTransactionReceipt",
+      params: [txHash],
+    })) as { status?: string; to?: string | null } | null;
+    if (receipt) {
+      if (receipt.status !== "0x1") {
+        throw new Error("Base Sepolia deposit transaction reverted");
+      }
+      if (!receipt.to || receipt.to.toLowerCase() !== escrowAddress.toLowerCase()) {
+        throw new Error("Deposit receipt did not target the Meme Olympics escrow");
+      }
+      return;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error("Timed out waiting for the Base Sepolia deposit confirmation");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+  }
+}

@@ -301,7 +301,7 @@ export default function MemeDetail() {
                 </div>
                 <div>
                   <span className="text-on-variant block">CONSENSUS MODEL</span>
-                  <span>Leader + independent validator re-judging (±15 tolerance)</span>
+                  <span>Leader + independent validator re-judging (±10 total; 8/9 axes within ±3)</span>
                 </div>
               </div>
             </GlassCard>

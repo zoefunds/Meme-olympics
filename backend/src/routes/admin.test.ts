@@ -22,6 +22,9 @@ vi.mock("../services/genlayer", () => ({
   get openCompetitionOnChain() {
     return fakeGl.openCompetitionOnChain;
   },
+  get setCompetitionDefaultsOnChain() {
+    return fakeGl.setCompetitionDefaultsOnChain;
+  },
   get getContractInfo() {
     return fakeGl.getContractInfo;
   },

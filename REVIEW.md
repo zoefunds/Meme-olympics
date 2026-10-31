@@ -1,100 +1,89 @@
-# Team Review Response — Payout-Critical Lifecycle
+# Steward review remediation
 
-## Review received
+Status: **implemented, tested, deployed, and production-switched on
+2026-10-31**.
 
-> Please make the payout-critical lifecycle authoritative on-chain: enforce deadlines
-> before evaluation, persist user-visible records only after confirmed contract writes,
-> and add reconciliation or retries when chain updates fail. Add tests covering failed
-> close, submission, dispute, and payout transitions so an arena cannot be scored early,
-> orphaned, or left unable to finalize.
+This document maps every material issue from the milestone review to its
+current implementation and verification evidence.
 
-## Summary
+## 1. Contract-authoritative timing and completion
 
-Every requirement below is implemented and covered by tests. One real bug was found and
-fixed in the process (dispute confirmation never persisted), and one build-breaking bug
-was caught (`decryptPrivateKey` used without being imported).
+The GenLayer contract, not the backend, now enforces the payout-critical
+lifecycle:
 
-## 1. Enforce deadlines before evaluation
+- `close_submissions` reads GenVM consensus time and rejects calls before the
+  declared `ends_at` deadline.
+- `evaluate_submission` accepts calls only while the arena is in `judging`.
+- `finalize_competition` rejects until every registered submission is in a
+  terminal judged/disqualified state and no dispute remains open.
+- Competition timestamps are validated as ISO-8601 UTC values with coherent
+  start/end ordering.
 
-- `runJudgingSweep()` in [`backend/src/jobs/weekly.ts`](backend/src/jobs/weekly.ts) only
-  evaluates submissions whose competition is already `status: "judging"` **and** whose
-  `endsAt` has passed — a competition still `open` never has its submissions scored,
-  even if they're already registered on-chain.
-- `closeCompetition()` is idempotent and only flips `open → judging` once `endsAt` has
-  passed; it's driven by both an exact-time timer (`scheduleClose`) and a per-minute
-  fallback sweep (`runDeadlineClose`) so a lost timer (e.g. a deploy restart) still
-  closes the arena on time.
-- [`backend/src/routes/submissions.ts`](backend/src/routes/submissions.ts) rejects a
-  submission once `endsAt` has passed even in the narrow window before the close timer
-  has actually fired — defense in depth against the deadline check living in only one
-  place.
+Adversarial coverage is in
+[`contracts/tests/test_lifecycle_guards.py`](contracts/tests/test_lifecycle_guards.py):
+premature closure, evaluation while open, and finalization with incomplete
+judging all fail at the contract boundary. Current result: **3/3 passing**.
 
-## 2. Persist user-visible records only after confirmed contract writes
+## 2. Challenge-safe settlement
 
-- **Competition creation** (both user-hosted
-  [`competitions.ts`](backend/src/routes/competitions.ts) and admin-created
-  [`admin.ts`](backend/src/routes/admin.ts)): if the on-chain `create_competition` /
-  `open_competition` calls fail, the DB row is deleted rather than left behind as an
-  orphaned "open" arena with no path to close or finalize (both of those require
-  `onchainCreated: true`).
-- **Dispute registration** — *this was the one real gap found during this pass.*
-  [`disputes.ts`](backend/src/routes/disputes.ts) created the dispute row and called
-  `openDisputeOnChain`, but never set `onchainOpened: true` on success. That flag is
-  exactly what `retryDisputeRegistrationSweep` checks to decide whether a dispute still
-  needs retrying — without it, every dispute would be retried forever (duplicate
-  on-chain writes) regardless of whether the first one actually landed. Fixed to only
-  mark it confirmed once the chain call succeeds.
-- **Submissions** already followed this pattern correctly — status only moves from
-  `pending` to `onchain` after `submitMemeOnChain` succeeds.
-- **Finalization/payout** — winners are only written to the DB (`status: "winner"`,
-  `winnersJson`) after `finalizeCompetitionOnChain` succeeds *and* a subsequent read
-  confirms the on-chain status is actually `"finalized"` (accounting for read-after-write
-  lag). If that read never settles, nothing is persisted and the sweep retries next tick.
+Finalization creates provisional winners and a contract-derived 24-hour
+`challenge_ends_at`. During that period:
 
-## 3. Reconciliation / retries when chain updates fail
+- disputes may still be opened against judged submissions;
+- an open dispute blocks settlement;
+- an upheld dispute disqualifies the affected entry and deterministically
+  promotes/reallocates the next eligible winner;
+- `mark_prizes_relayed` is rejected before the challenge deadline.
 
-Four independent retry sweeps run every tick in
-[`weekly.ts`](backend/src/jobs/weekly.ts):
+The Base escrow mirrors the same safety boundary. `setWinners` records a
+`claimableAfter` value and `claim`/`claimMany` reject early withdrawals. This
+means no Base payout becomes irreversible while a financially consequential
+GenLayer challenge can still change the winner set.
 
-| Sweep | Retries |
-|---|---|
-| `retryOnchainCreationSweep` | Competitions stuck `open` with `onchainCreated: false` |
-| `retrySubmissionRegistrationSweep` | Submissions stuck `pending` with no tx hash (within a 30-min window, then marked `failed`) |
-| `retryDisputeRegistrationSweep` | Disputes stuck with `onchainOpened: false` |
-| `runFinalization` | Competitions stuck in `judging` whose submissions are all processed, but whose finalize call or read hasn't settled yet |
+Escrow coverage is in
+[`contracts/base/test/MemeOlympicsEscrow.t.sol`](contracts/base/test/MemeOlympicsEscrow.t.sol).
+Current result: **2/2 passing**.
 
-Also fixed: `weekly.ts` called `decryptPrivateKey` in the retry sweeps without importing
-it — this would have thrown at build/runtime the first time a retry actually fired.
+## 3. Partial cross-chain recovery
 
-## 4. Tests
+[`backend/src/services/baseSepolia.ts`](backend/src/services/baseSepolia.ts)
+handles the case where Base `setWinners` succeeds but the subsequent GenLayer
+relay marker fails. A retry now:
 
-New test suite (vitest + supertest, `npm test` in `backend/`) — 24 tests across 5 files,
-using an in-memory fake Prisma client and a fake GenLayer service so tests exercise real
-route/job logic rather than asserting on mock call arguments:
+1. reads the existing Base pool;
+2. verifies total allocation, claim deadline, winners, and per-winner balances;
+3. locates the original `WinnersSet` event transaction;
+4. returns that transaction hash and retries only the GenLayer marker.
 
-- [`weekly.test.ts`](backend/src/jobs/weekly.test.ts) — no early close/scoring before
-  deadline, orphan-safe close (refuses to close/never-confirmed-on-chain), idempotent
-  close, on-chain creation retry (success and repeated failure), no evaluation while
-  still open, submission marked `failed` after 30 min unregistered, no partial/early
-  payout while submissions are unprocessed, payout only recorded once finalize is
-  confirmed, no payout if the finalize read never settles.
-- [`submissions.test.ts`](backend/src/routes/submissions.test.ts) — accepts a genuinely
-  open submission, rejects once the deadline passes even with `status: "open"` still
-  set, rejects against a `judging` competition, keeps the row `pending` for retry rather
-  than failing the request when the chain write errors.
-- [`disputes.test.ts`](backend/src/routes/disputes.test.ts) — `onchainOpened` set only
-  on confirmed success, left `false` on failure (regression test for the bug above),
-  rejects disputes against unevaluated submissions.
-- [`competitions.test.ts`](backend/src/routes/competitions.test.ts) /
-  [`admin.test.ts`](backend/src/routes/admin.test.ts) — orphan rollback on failed
-  on-chain creation for both creation paths, `onchainCreated` only persisted after
-  success, dispute resolution syncs from confirmed on-chain state.
+It never blindly resends the one-time Base allocation.
 
-`tsc --noEmit` and `npm run build` are clean; all 24 tests pass.
+## 4. Funding receipt verification
 
-## Deployment
+The frontend waits for successful Base Sepolia approval and deposit receipts,
+checks receipt status and target address, then calls
+`POST /api/competitions/:id/escrow-fund-confirm`. The backend independently
+reads the transaction and escrow pool before the UI reports the prize funded.
 
-These fixes are live on the production backend
-(`https://meme-olympics-api-prod.fly.dev`), migrated to a new Fly.io account with the
-`onchainOpened` column applied via Prisma migration `0004_dispute_onchain_tracking`, and
-the frontend has been redeployed pointing at it.
+## 5. Reproducible allocation and claim
+
+[`contracts/base/e2e-example.js`](contracts/base/e2e-example.js) demonstrates
+the complete Base Sepolia path: approve, deposit, allocate winners after the
+contract challenge deadline, claim, and verify pool/claimable state after each
+stage. Instructions are in
+[`contracts/base/README.md`](contracts/base/README.md).
+
+## 6. Verification and production evidence
+
+- Backend Vitest suite: **27/27 passing**
+- GenLayer adversarial lifecycle tests: **3/3 passing**
+- Foundry escrow tests: **2/2 passing**
+- Frontend production build: passing
+- API health: https://meme-olympics-api-v2-gideon.fly.dev/health
+- Live app: https://meme-olympics.vercel.app
+- GenLayer contract:
+  `0x5BDD6676c2f3cc2e04356A61b6Fc9Cd621f1d023`
+- Base escrow: `0x372582652fc0aa9407B426a8779ee92dA5859Cf8`
+
+The live verification script confirms that the configured GenLayer operator is
+the contract owner/admin and that the configured Base escrow has deployed
+bytecode with the expected owner, relayer, and Circle Base Sepolia USDC.

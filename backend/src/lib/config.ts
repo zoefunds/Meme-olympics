@@ -17,7 +17,7 @@ export const config = {
   walletEncryptionKey: required("WALLET_ENCRYPTION_KEY"),
   frontendUrl: process.env.FRONTEND_URL || "http://localhost:3000",
   // Canonical, stable host used to build absolute image URLs (e.g.
-  // https://meme-olympics-api.fly.dev). Must NOT be derived from
+  // https://meme-olympics-api-v2-gideon.fly.dev). Must NOT be derived from
   // req.protocol/req.get("host") at request time — behind Fly's proxy that
   // can report the wrong scheme/host, producing a URL that later 404s and
   // shows as a "missing image" on judged results.

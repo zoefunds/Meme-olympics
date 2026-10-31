@@ -15,7 +15,7 @@ jobs:
       - name: Check API health
         id: api
         run: |
-          code=$(curl -s -o /tmp/health.json -w "%{http_code}" --max-time 15 https://meme-olympics-api.fly.dev/health || echo "000")
+          code=$(curl -s -o /tmp/health.json -w "%{http_code}" --max-time 15 https://meme-olympics-api-v2-gideon.fly.dev/health || echo "000")
           echo "code=$code" >> "$GITHUB_OUTPUT"
           cat /tmp/health.json 2>/dev/null || true
           [ "$code" = "200" ]
@@ -39,5 +39,5 @@ jobs:
             await github.rest.issues.create({
               owner: context.repo.owner, repo: context.repo.repo,
               title, labels: ["uptime"],
-              body: `A scheduled health check failed at ${new Date().toISOString()}.\n\n- API: https://meme-olympics-api.fly.dev/health\n- Frontend: https://meme-olympics.vercel.app\n\nCheck \`fly logs -a meme-olympics-api\` and \`fly status -a meme-olympics-api\`.`,
+              body: `A scheduled health check failed at ${new Date().toISOString()}.\n\n- API: https://meme-olympics-api-v2-gideon.fly.dev/health\n- Frontend: https://meme-olympics.vercel.app\n\nCheck \`fly logs -a meme-olympics-api-v2-gideon\` and \`fly status -a meme-olympics-api-v2-gideon\`.`,
             });

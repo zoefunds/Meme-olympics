@@ -38,6 +38,9 @@ vi.mock("../services/genlayer", () => ({
   get getOnchainCompetition() {
     return fakeGl.getOnchainCompetition;
   },
+  get canRelayPrizesOnChain() {
+    return fakeGl.canRelayPrizesOnChain;
+  },
   get readSettled() {
     return fakeGl.readSettled;
   },

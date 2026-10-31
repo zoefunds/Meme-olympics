@@ -22,7 +22,7 @@ export default function Docs() {
       <header className="mb-16">
         <div className="flex items-center gap-4 mb-6">
           <span className="font-mono text-xs px-3 py-1 bg-cyan-soft/10 border border-cyan-soft/20 text-cyan-soft rounded-full">
-            v1.0.0-STUDIONET
+            v2.0.0-STUDIONET
           </span>
           <span className="text-on-variant/40">—</span>
           <MonoLabel>Judged by GenLayer Intelligent Contracts</MonoLabel>
@@ -107,14 +107,37 @@ def validator_fn(leaders_res):
     # Hard gate: both must agree on plagiarism disqualification
     if leader_disqualified != my_disqualified: return False
 
-    # Total score must agree within ±15/100
-    if abs(leader_score - mine_score) > 15: return False
+    # Total score must agree within ±10/100
+    if abs(leader_score - mine_score) > 10: return False
 
-    # 7 of 9 criteria within ±5 — tolerant, but a lying leader fails
+    # At least 8 of 9 criteria must agree within ±3
     return criteria_close_enough(leader, mine)
 
 gl.vm.run_nondet_unsafe(leader_fn, validator_fn)`}</pre>
           </div>
+        </GlassCard>
+      </section>
+
+      <section className="mb-20">
+        <div className="flex items-center gap-4 mb-8">
+          <div className="h-px flex-1 bg-gradient-to-r from-purple/50 to-transparent" />
+          <h2 className="font-display font-semibold text-3xl text-white whitespace-nowrap">
+            Challenge-Safe Settlement
+          </h2>
+        </div>
+        <GlassCard className="p-8">
+          <p className="text-on-variant leading-relaxed">
+            Finalization opens a 24-hour on-chain challenge period. GenLayer
+            refuses settlement while that window is open or a dispute remains
+            unresolved, and the Base Sepolia escrow independently time-locks
+            claims to the same deadline. An upheld challenge rebalances the
+            provisional winner set before USDC allocations become claimable.
+          </p>
+          <p className="font-mono text-xs text-cyan-dim mt-5 break-all">
+            GenLayer: 0x5BDD6676c2f3cc2e04356A61b6Fc9Cd621f1d023
+            <br />
+            Base escrow: 0x372582652fc0aa9407B426a8779ee92dA5859Cf8
+          </p>
         </GlassCard>
       </section>
 

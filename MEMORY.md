@@ -1,182 +1,104 @@
-# MEMORY — Meme Olympics
+# Meme Olympics — current project memory
 
-Living project memory. Update as decisions land.
+Last verified: **2026-10-31**.
 
-## What this is
-Weekly crypto-meme competitions where winners are decided by **GenLayer
-Intelligent Contract validator consensus** (LLM judging), never by likes or
-votes. One serious project, one robust contract.
+This file contains only current operational facts. Historical deployment
+addresses and retired architectures have deliberately been removed.
 
-## Architecture decisions
-- **Backend**: Node 20 + TypeScript + Express + Prisma + PostgreSQL (Docker
-  locally, Fly Postgres in prod). Hosted on **Fly.io** with
-  `auto_stop_machines=false`, `min_machines_running=1` → 24/7.
-- **Frontend**: Next.js 14 App Router + Tailwind on **Vercel**. Design system
-  = "Aura Arena" (deep-space #131314, Olympic gold #FFD700, electric purple
-  #7701D0, neon cyan #00F1FE; Space Grotesk / Inter / JetBrains Mono;
-  glassmorphism, scanlines, segmented console progress bars).
-- **Auth**: wallet-signature login with a single-use nonce and JWT session.
-  The connected wallet is the only user identity; there are no passwords,
-  emails, generated wallets, encrypted private keys, or custodial keys.
-- **Wallet discovery**: EIP-6963 enumerates multiple injected extensions and
-  presents a chooser. The selected EIP-1193 provider is explicitly reused
-  for login, GenLayer writes and Base Sepolia transactions;
-  `window.ethereum` is only the legacy fallback.
-- **Redis (Upstash)**: deliberately minimal to avoid maxing the quota — only
-  rate-limit INCRs on sensitive routes and 60–120s leaderboard/competition
-  caches; fail-open when unavailable. All Redis access lives in
-  `backend/src/lib/redis.ts`.
+## Production
 
-## Intelligent contract (`contracts/meme_olympics.py`, ~1700 lines)
-- Runner pinned: `py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6`
-  (never `test`/`latest` — networks reject them).
-- **Correct GenVM API**: `gl.message.sender_address` (NOT `sender_account` —
-  caused the first deploy failure).
-- Consensus design: custom validators via `gl.vm.run_nondet_unsafe`; validator
-  independently re-runs judging and compares stable fields with tolerances
-  (total ±15/100, 7-of-9 criteria within ±5, plagiarism "copied" hard gate at
-  confidence ≥70). Error prefixes [EXPECTED]/[EXTERNAL]/[TRANSIENT]/[LLM_ERROR].
-- Finalization + rewards fully deterministic (50/30/20 split, atto-scale u256).
-- Disputes require a public evidence URL fetched **on-chain**; unfetchable
-  evidence ⇒ auto-reject (never judge from user text alone).
+- App: https://meme-olympics.vercel.app
+- API: https://meme-olympics-api-v2-gideon.fly.dev
+- API health: https://meme-olympics-api-v2-gideon.fly.dev/health
+- GenLayer StudioNet contract:
+  `0x5BDD6676c2f3cc2e04356A61b6Fc9Cd621f1d023`
+- Base Sepolia escrow:
+  `0x372582652fc0aa9407B426a8779ee92dA5859Cf8`
+- Base Sepolia USDC:
+  `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
+- Fly backend app: `meme-olympics-api-v2-gideon`
+- Fly PostgreSQL app: `meme-olympics-db-v2-gideon`
 
-## Lifecycle automation (backend, UTC)
-- No scheduled rollover or automatic arena creation. Any authenticated
-  wallet may host; only one arena may be active platform-wide at a time.
-- **Exact-time close**: each arena gets its own `setTimeout` armed at
-  creation (and re-armed for every open arena on backend restart via
-  `armPendingCloseTimers()`) that fires `close_submissions` the instant
-  `endsAt` hits — closes land within ~1-2s of deadline, verified live.
-- Every-minute fallback sweep, split into two INDEPENDENT single-flight
-  guards (`closeRunning` / `judgeRunning`) so one never blocks the other:
-  - close tick — catches any arena whose exact timer was lost to a restart
-  - judge tick — judges up to 10 pending submissions (one arena's worth at
-    a time, strictly sequential — a submission is fully finalized on-chain
-    before the next is even sent) + finalizes fully-judged arenas
-  Before this split, a long judging run on one arena could block the CLOSE
-  step for a different, already-expired arena — letting it keep accepting
-  submissions past its deadline. Confirmed fixed live with two arenas
-  closing ~30s apart.
+The backend has one always-on Fly machine (`min_machines_running=1`,
+`auto_stop_machines=false`). Cron work is Redis-locked and remains safe if the
+service is scaled horizontally later. The replacement PostgreSQL database was
+created fresh during the 2026-10-31 switchover; retired database contents were
+not migrated.
 
-## Deployment status
-- [x] Repo: https://github.com/zoefunds/Meme-olympics (no Claude attribution)
-- [x] Contract deployed to StudioNet (CURRENT): `0xa1439a103Ff8b1eBfa13Ea95626E2fA269e8F016`
-      (owner/deployer: the user's own wallet, deployed via Studio UI — the
-      user deploys the contract themselves every time, never me).
-      Supports REAL GEN value transfer, creator-can-finalize, permissionless
-      competition creation/funding, vision-based judging, and a 1-submission-
-      per-user-per-arena cap (backend + `set_competition_defaults(3, 1)`).
-      Prior addresses (superseded, kept for history): 0xC31D...9224,
-      0x9F64...52Ee, 0xADC1...a877, 0xE96f...A571A, 0x3E57...7244 — each
-      redeployed by the user to clear test-data or add a feature.
-- [x] Fly deploy live at meme-olympics-api.fly.dev, GENLAYER_CONTRACT_ADDRESS
-      updated to the current address above.
-- [x] Vercel deploy live at meme-olympics.vercel.app.
-- [x] Backend operator (`0x4A6666C015BE347799E0B25cfE27bfd3847027BB`) has
-      been granted `add_admin` on the current contract — automated
-      close/judge/finalize is fully live.
-- **Standing rule**: the user deploys the contract themselves via Studio
-  every time ("I will be the one to deploy the contract") — I prepare/fix
-  the contract file and hand off; I never deploy it. After each new
-  address, the user must re-run `add_admin(<operator address>)` since
-  contract-level admin doesn't carry over across redeploys.
+## Authoritative lifecycle
 
-## Vision-based judging (added — read before touching the judging prompt)
-- The contract fetches the submission's actual image bytes (already doing
-  the fetch for reachability) and passes them to
-  `gl.nondet.exec_prompt(prompt, response_format="json", images=[body])` —
-  genuine visual input, not just a URL string in the prompt text.
-- **Type-stub trap**: the runtime's own type stubs advertise a singular
-  `image=` kwarg for JSON-mode calls, but the actual implementation only
-  ever reads `images=` (plural, list) regardless of `response_format`.
-  Passing `image=` singular is silently a no-op — confirmed by testing on
-  the pinned runner, not by trusting the stubs.
-- Proven with two throwaway-contract tests before touching production: a
-  solid-color image correctly identified by color, and a real meme
-  ("Woman Yelling at Cat") correctly described in detail with zero textual
-  hints available. Then verified end-to-end in production with a zero-hint
-  test image whose evaluation summary correctly described its actual
-  visual content (a plain blue triangle).
-- The plagiarism-detection task now reasons from actual visual evidence
-  (watermarks, screenshot chrome, pixel-identical duplication) instead of
-  only URL/filename patterns.
+1. A host registers an arena in the API, signs `create_competition` and
+   `open_competition` with their own wallet, and confirms the resulting state
+   back to the API.
+2. If a prize is declared, the host approves and deposits Base Sepolia USDC.
+   The frontend waits for successful transaction receipts and the backend
+   independently confirms the escrow pool before reporting the arena funded.
+3. `close_submissions` reads GenVM consensus time and rejects closure before
+   `ends_at`. Direct transactions cannot bypass this rule.
+4. `evaluate_submission` is accepted only while the arena is in `judging`.
+5. `finalize_competition` requires every submission to be terminal and every
+   open dispute resolved. Winners are deterministic.
+6. Finalization opens a 24-hour challenge period. Winning submissions may be
+   disputed during this window; an upheld dispute rebalances provisional
+   winners and allocations on GenLayer.
+7. Only after the challenge window closes and no dispute remains open may the
+   relayer call Base `setWinners`. Base claims are independently time-locked by
+   the same `claimableAfter` timestamp.
+8. If Base allocation succeeds but the GenLayer relay marker fails, retries
+   verify the existing pool and recover the original `WinnersSet` transaction
+   instead of resending the one-time allocation.
+9. Winners call `claim` or `claimMany` directly from their own wallet. The
+   backend never custodies prize money.
 
-## Real GEN value transfer (added — read before touching money paths)
-- Contract methods: `create_competition` and `fund_competition` are
-  `@gl.public.write.payable` — GEN sent as tx `value` becomes/adds-to that
-  competition's real escrowed `prize_pool_atto` (the contract's own native
-  balance backs it, readable via `self.balance` / `get_contract_info().contract_gen_balance_atto`).
-  `claim_reward()` is self-serve: caller pulls their full `reward_balances_atto`
-  to their own wallet via a genuine on-chain transfer.
-- **THE REAL FIX (confirmed by live testing with real funded accounts,
-  after extensive false starts — read this before touching payout code)**:
-  `gl.get_contract_at(addr).emit_transfer(...)` — in EVERY calling
-  convention tried (chained `.emit(value=X).emit_transfer()`, direct
-  `.emit_transfer(value=X, on=...)` keyword form matching genvm's own docs
-  AND a working reference project's exact code, `gl.chain.Account`,
-  `gl.Account`, `gl.send`, `gl.transfer`) — **only delivers value to a
-  deployed CONTRACT address. It fails against a plain wallet (EOA)**,
-  which is what every custodial wallet is, either with an explicit
-  `"Contract <addr> not found"` error or a silent no-op (zero triggered
-  transactions, no balance change, no error). Proven with a control test:
-  identical code succeeds and moves real value when the destination is a
-  contract, fails every time when the destination is a wallet.
-  **The mechanism that actually works**: an `@gl.evm.contract_interface`
-  stub, routed through GenLayer's EVM-compatibility layer instead of the
-  native `get_contract_at` lookup:
-  ```python
-  @gl.evm.contract_interface
-  class _Recipient:
-      class View: pass
-      class Write: pass
+## Contract authority
 
-  def _send_gen(self, to_address: str, amount: u256) -> None:
-      _Recipient(Address(to_address)).emit_transfer(value=amount)
-  ```
-  Confirmed live: wallet balance increased by exactly the transferred
-  amount. This is now the ONLY payout mechanism in the contract — every
-  transfer routes through `_send_gen`, no other code path calls
-  `emit_transfer` directly. Source: a working reference project
-  (`~/Event-Weaver`, shared by a contact) uses this exact pattern for its
-  escrow payouts — note Event Weaver's own test suite only asserts its
-  internal ledger (`get_balance_of`), never a real wallet balance, so its
-  "verified" claim didn't actually prove this either; only live-network
-  testing with real funded accounts does.
-- Backend signs `create_competition`/`fund_competition`/`claim_reward` with
-  the REQUESTING USER's own decrypted custodial key (not the operator) — real
-  money moves from/to the person who owns it. `services/genlayer.ts` has
-  `createCompetitionAsUser`, `fundCompetitionOnChain`, `claimRewardOnChain`.
-- `finalize_competition`/`close_submissions` now allow creator-OR-admin (not
-  admin-only) — `_require_creator_or_admin(comp)` — so any host can end their
-  own arena without waiting on an admin, per explicit user request.
-- **Known deploy-time quirk**: some deploy paths (raw RPC via genlayer-js,
-  NOT the Studio UI) present a zero `gl.message.sender_address` to `__init__`
-  AND silently drop constructor args/kwargs — confirmed by testing both.
-  Fix added: `claim_initial_owner()` write method — a normal (non-constructor)
-  call, where sender_address has been 100% reliable throughout this whole
-  project. If `self.owner` is still the zero address, the first caller of
-  `claim_initial_owner()` becomes owner/admin; no-ops (raises) once a real
-  owner is set. Deploying via Studio UI (as the user did for the current
-  address) resolves sender correctly and doesn't need this bootstrap — it's
-  a safety net for RPC-based deploys only.
-- Reads-after-write can lag by several seconds on this network (same
-  pattern hit repeatedly: judging sweep, finalization winners, wallet
-  balance after claim) — always poll before trusting a read that
-  immediately follows a write. `readSettled()` / `waitForWalletIncrease()`
-  in `genlayer.ts` exist for exactly this.
-- claim_reward end-to-end (fund → judge → finalize → claim → real wallet
-  balance increase) is now proven working with the `_send_gen`/EVM-interface
-  fix — pending a fresh contract deploy + backend rewire to pick it up.
+- Users sign login, arena creation/opening, meme submission, dispute opening,
+  USDC funding, and claims with the selected injected wallet.
+- The GenLayer operator signs only administrative lifecycle work: close,
+  judge, finalize, resolve disputes, and mark prizes relayed.
+- The Base relayer signs only winner allocation after GenLayer authorizes
+  settlement.
+- Production verification confirms the configured GenLayer operator is the
+  contract owner/admin and the configured Base relayer is both escrow owner
+  and relayer.
 
-## Gotchas
-- genlayer-js v0.10.0 is ESM-only, no `studionet` chain export → loaded via
-  dynamic import(); StudioNet = `localnet` chain shape + hosted endpoint.
-- genlayer-js `readContract` results are `Map`s → normalized via `toPlain()`
-  in `backend/src/services/genlayer.ts`.
-- Admin promotion is via `ADMIN_EMAILS` env at registration time (app-level
-  admin ≠ contract-level admin; the latter needs `add_admin` on-chain, see above).
-- Contract method args must stay primitives/strings (dates passed as ISO
-  strings because the chain has no clock).
-- A GenLayer tx can be consensus-ACCEPTED while its LEADER execution errored
-  — always check `receipt.consensus_data.leader_receipt.execution_result`,
-  not just tx status.
+## Verification commands
+
+```bash
+# Backend type checks, integration tests, and build
+cd backend
+npm run typecheck
+npm test -- --run
+npm run build
+
+# Live chain ownership/configuration checks
+npm run verify:production-chains
+
+# GenLayer adversarial lifecycle tests
+cd ..
+python3 -m pytest contracts/tests/test_lifecycle_guards.py
+
+# Base escrow tests (Foundry)
+cd contracts/base
+forge test
+
+# Frontend production build
+cd ../../frontend
+npm run build
+```
+
+Current verified counts: backend **27/27**, GenLayer lifecycle **3/3**, Base
+escrow **2/2**.
+
+## Operational rules
+
+- Never reuse or fund the retired Base relayer/escrow.
+- Never place a private key in a command argument, source file, issue, or chat.
+  `backend/scripts/set-production-secrets.ts` sends Fly secrets over stdin.
+- Attach Fly PostgreSQL using a non-superuser application role. The production
+  secret importer intentionally does not overwrite `DATABASE_URL`.
+- After any GenLayer redeploy, verify `get_contract_info` and `is_admin` before
+  enabling workers.
+- After any escrow redeploy, verify bytecode, owner, relayer, and USDC address.
+- A successful build is not a deployment check: verify Fly health, PostgreSQL
+  health, Vercel HTTP 200, and live chain configuration separately.

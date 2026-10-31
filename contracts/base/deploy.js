@@ -4,20 +4,27 @@
  *
  * Reads everything from environment variables — NEVER pass a private key
  * as a CLI argument or paste one into chat/logs. Put it in a local .env
- * (gitignored) or your shell's secret-loaded env, then run:
+ * (`backend/.env`, gitignored) or your shell's secret manager, then run:
  *
- *   DEPLOYER_PRIVATE_KEY=... \
- *   BASE_SEPOLIA_RPC_URL=https://sepolia.base.org \
- *   BASE_SEPOLIA_USDC_ADDRESS=0x036CbD53842c5426634e7929541eC2318f3dCF7 \
- *   RELAYER_ADDRESS=0x... \
- *   node contracts/base/deploy.js
+ *   cd backend
+ *   npm run deploy:escrow
  *
  * Requires: npm i -D ethers solc  (in whichever package.json runs this from)
  */
 const fs = require("fs");
 const path = require("path");
-const solc = require("solc");
-const { ethers } = require("ethers");
+// This script lives outside backend/, while its deliberate build dependencies
+// live in backend/node_modules. Resolve them explicitly so `npm run
+// deploy:escrow` works from the documented directory instead of depending on
+// a globally-installed solc.
+const backendModules = path.resolve(__dirname, "../../backend/node_modules");
+const solc = require(path.join(backendModules, "solc"));
+const { ethers } = require(path.join(backendModules, "ethers"));
+const dotenv = require(path.join(backendModules, "dotenv"));
+
+// Convenient for the documented local workflow. Explicit process env still
+// wins, which is how an external secret manager should supply secrets.
+dotenv.config({ path: path.resolve(__dirname, "../../backend/.env") });
 
 function requireEnv(name) {
   const v = process.env[name];
@@ -50,11 +57,14 @@ function compile() {
 }
 
 async function main() {
-  const privateKey = requireEnv("DEPLOYER_PRIVATE_KEY");
+  // A dedicated deployer is preferred. For Base Sepolia development the
+  // configured relayer can also deploy, avoiding a fragile shell `source`
+  // step merely to copy the same secret into another variable.
+  const privateKey = process.env.DEPLOYER_PRIVATE_KEY || requireEnv("BASE_SEPOLIA_RELAYER_PRIVATE_KEY");
   const rpcUrl = process.env.BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org";
   const usdcAddress =
     process.env.BASE_SEPOLIA_USDC_ADDRESS || "0x036CbD53842c5426634e7929541eC2318f3dCF7";
-  const relayerAddress = requireEnv("RELAYER_ADDRESS");
+  const relayerAddress = process.env.RELAYER_ADDRESS || new ethers.Wallet(privateKey).address;
 
   const { abi, bytecode } = compile();
 

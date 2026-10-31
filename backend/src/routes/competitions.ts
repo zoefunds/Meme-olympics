@@ -273,6 +273,37 @@ competitionsRouter.get(
   });
 });
 
+// POST /api/competitions/:id/escrow-fund-confirm — an independent read of
+// the Base escrow after the browser has observed a successful deposit receipt.
+// The UI must not label a declared GenLayer amount as funded until this source
+// of truth reports enough USDC in the keyed pool.
+competitionsRouter.post(
+  "/:id/escrow-fund-confirm",
+  requireAuth,
+  async (req: AuthedRequest, res: Response) => {
+    if (!config.baseSepolia.escrowAddress) {
+      return res.status(503).json({ error: "Escrow contract not configured yet" });
+    }
+    const comp = await prisma.competition.findUnique({ where: { id: req.params.id } });
+    if (!comp) return res.status(404).json({ error: "Competition not found" });
+    if (comp.createdByUserId !== req.userId) {
+      return res.status(403).json({ error: "Only the arena creator can confirm funding" });
+    }
+    try {
+      const pool = await escrow.getEscrowPool(comp.id);
+      const required = BigInt(comp.prizeAtto);
+      return res.json({
+        funded: BigInt(pool.deposited) >= required,
+        required: required.toString(),
+        deposited: pool.deposited,
+        allocated: pool.allocated,
+      });
+    } catch (err) {
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  }
+);
+
 // GET /api/competitions — list (cached 120s)
 competitionsRouter.get("/", async (_req, res) => {
   const cached = await cacheGet("comps:list");

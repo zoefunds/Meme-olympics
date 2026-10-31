@@ -7,3 +7,8 @@ dist/
 *.log
 .DS_Store
 .vercel
+__pycache__/
+*.py[cod]
+artifacts/
+contracts/base/cache/
+contracts/base/out/

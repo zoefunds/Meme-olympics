@@ -12,8 +12,17 @@ import { studionet } from "genlayer-js/chains";
 import type { GenLayerClient } from "genlayer-js/types";
 import { getSelectedWalletProvider, requestWalletProvider, Eip1193Provider } from "./walletProviders";
 
-export const CONTRACT_ADDRESS = (process.env.NEXT_PUBLIC_GENLAYER_CONTRACT_ADDRESS ||
-  "0xf363797335d66E6Af00502f43EDE872C5Fe19bCb") as `0x${string}`;
+// Never fall back to a historical deployment. A missing production build-time
+// variable must fail closed rather than send a user transaction to an old
+// contract with a different settlement lifecycle.
+export const CONTRACT_ADDRESS = (process.env.NEXT_PUBLIC_GENLAYER_CONTRACT_ADDRESS || "") as `0x${string}`;
+
+function requireContractAddress(): `0x${string}` {
+  if (!/^0x[a-fA-F0-9]{40}$/.test(CONTRACT_ADDRESS)) {
+    throw new Error("Meme Olympics contract is not configured for this deployment.");
+  }
+  return CONTRACT_ADDRESS;
+}
 
 const STUDIONET_CHAIN_ID_HEX = `0x${studionet.id.toString(16)}`;
 
@@ -130,11 +139,12 @@ export async function genlayerWrite(
   args: unknown[],
   value?: bigint
 ): Promise<{ hash: string; receipt: unknown }> {
+  const contractAddress = requireContractAddress();
   await ensureStudioNetwork();
   const client = getGenLayerClient(address);
   const hash = (await withBackoff(() =>
     client.writeContract({
-      address: CONTRACT_ADDRESS,
+      address: contractAddress,
       functionName,
       // genlayer-js encodes primitives/arrays/objects as GenLayer calldata
       args: args as never[],

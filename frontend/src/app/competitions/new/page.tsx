@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, getUser } from "@/lib/api";
-import { connectWallet, sendEscrowTxSequence, EscrowTxStep } from "@/lib/baseSepolia";
+import { connectWallet, sendEscrowTxSequence, verifyEscrowDepositReceipt, EscrowTxStep } from "@/lib/baseSepolia";
 import { genlayerWrite } from "@/lib/genlayer";
 import { GlassCard, MonoLabel, PrestigeButton, TerminalField } from "@/components/ui";
 
@@ -27,12 +27,23 @@ export default function NewCompetition() {
 
   async function depositPrize(address: string, competitionId: string, amountUsdc: number) {
     setStatus("Fetching deposit transactions…");
-    const { steps } = await api<{ steps: EscrowTxStep[] }>(
+    const { steps, escrowAddress } = await api<{ steps: EscrowTxStep[]; escrowAddress: string }>(
       `/api/competitions/${competitionId}/escrow-fund-calldata?amountUsdc=${amountUsdc}`
     );
     setStatus("Confirm the approve + deposit transactions in your wallet (Base Sepolia)…");
     await connectWallet(); // ensures Base Sepolia is the active chain
-    await sendEscrowTxSequence(steps);
+    const hashes = await sendEscrowTxSequence(steps);
+    const depositHash = hashes[hashes.length - 1];
+    if (!depositHash) throw new Error("Wallet did not return a deposit transaction hash");
+    setStatus("Verifying Base Sepolia deposit receipt…");
+    await verifyEscrowDepositReceipt(depositHash, escrowAddress);
+    const confirmation = await api<{ funded: boolean }>(
+      `/api/competitions/${competitionId}/escrow-fund-confirm`,
+      { method: "POST" }
+    );
+    if (!confirmation.funded) {
+      throw new Error("Deposit receipt confirmed, but the escrow pool has not reflected the declared prize yet");
+    }
     setStatus("✓ Prize pool funded on Base Sepolia.");
   }
 

@@ -4,9 +4,9 @@
 in real USDC on Base Sepolia — not likes, not votes, only logic.**
 
 - **Live app:** https://meme-olympics.vercel.app
-- **API:** https://meme-olympics-api-prod.fly.dev (Fly.io, 24/7, 2 machines)
-- **GenLayer Intelligent Contract (StudioNet):** `0x5e6ac07590509DD20fF3279692A8E8FD6a557563`
-- **MemeOlympicsEscrow (Base Sepolia):** `0x76128b04627b80D8E556568cc7fA7cb0eaf035Fe`
+- **API:** https://meme-olympics-api-v2-gideon.fly.dev (Fly.io, 24/7)
+- **GenLayer Intelligent Contract (StudioNet):** `0x5BDD6676c2f3cc2e04356A61b6Fc9Cd621f1d023`
+- **MemeOlympicsEscrow (Base Sepolia):** `0x372582652fc0aa9407B426a8779ee92dA5859Cf8`
 - **USDC (Base Sepolia, Circle official):** `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
 
 Anyone can host an arena — set a theme, a deadline, and an optional real
@@ -57,7 +57,7 @@ flowchart LR
     FE[Next.js 14 — Aura Arena UI]
     WALLET[User's connected wallet — MetaMask etc.]
   end
-  subgraph API [Fly.io — 24/7, 2 machines, Redis-locked cron]
+  subgraph API [Fly.io — 24/7, Redis-locked cron]
     BE[Express + Prisma API]
     IMG[First-party image host /i/:id]
     SCHED[Exact-time close timers + judge/finalize/relay sweeps]
@@ -101,9 +101,10 @@ sequenceDiagram
   C->>L: fetch image bytes on-chain + vision LLM judging (eligibility gate, 9 criteria, plagiarism)
   C->>V: every validator re-runs the SAME task independently, seeing the SAME image
   V-->>C: agree iff eligibility matches, score within tolerance, DQ-gate matches
-  C->>C: once all submissions judged, finalize picks winners deterministically
-  API->>C: mark_prizes_relayed (idempotency marker, moves no value)
-  API->>E: relay winners + USDC amounts (Redis-locked, retried until confirmed)
+  C->>C: once every submission is terminal and disputes resolve, finalize picks winners deterministically
+  Note over C,E: 24h challenge period; late challenges and early settlement are rejected on-chain
+  API->>E: relay winners + USDC amounts after settlement (Redis-locked, reconciled on retry)
+  API->>C: mark_prizes_relayed (only after challenge period, idempotency marker)
   W->>E: winner claims their USDC directly — self-serve pull, backend never touches it
 ```
 
@@ -156,11 +157,12 @@ sequenceDiagram
 - **Strictly sequential judging** — submissions are evaluated one at a
   time; a submission is fully finalized on-chain before the next one is
   even sent.
-- **Exact-time deadlines** — each arena gets its own timer armed the
+- **Enforced deadlines** — each arena gets its own timer armed the
   instant it's created (and re-armed for every open arena on backend
   restart), so its close fires within ~1-2 seconds of the deadline. A
   per-minute sweep is kept only as a fallback for a timer lost to a
-  restart.
+  restart. The Intelligent Contract also reads GenVM's consensus timestamp,
+  so a direct transaction cannot close early or evaluate while still open.
 - **Consensus reports** — every meme card links to `/meme/:id`: full
   9-criteria breakdown with on-chain weights, eligibility + plagiarism
   verdict with confidence, the validators' written judging summary, and
@@ -168,18 +170,20 @@ sequenceDiagram
 - **Disputes** — a "⚔ Challenge This Meme" button on every judged report;
   challengers must supply a public evidence URL, which the contract
   fetches **on-chain** and rules on. The `open_dispute` call is signed by
-  the challenger's own wallet, same as submissions.
+  the challenger's own wallet, same as submissions. Finalization starts a
+  24-hour challenge window; unresolved disputes block financial settlement.
 - **Leaderboards** — Hall of Glory podium + detailed rankings per arena.
 - **Real USDC rewards, self-claimed** — GenLayer computes winners and USDC
   amounts owed as a pure judging record (no value moves there); the
-  backend relays that result to MemeOlympicsEscrow on Base Sepolia, and
+  backend relays that result to MemeOlympicsEscrow on Base Sepolia only after
+  the challenge window, and
   winners pull their own USDC directly from the escrow contract with
   their own wallet. The backend never custodies a cent.
 - **USDC balance dashboard** — Settings and Rewards both show your real
   wallet USDC balance on Base Sepolia, what you've won but isn't relayed
   yet, and what's actually claimable right now — tracked per-competition
   relay status, not inferred from a running total that never decrements
-  (a bug we hit and fixed: see [milestone-v2.md](milestone-v2.md)).
+  (a bug we hit and fixed: see [milestone-v1.md](milestone-v1.md)).
 - **Live status without a manual reload** — submission status, scores and
   balances auto-poll on Dashboard, Leaderboard, Rewards, Settings, Arena
   and meme-detail pages.
@@ -189,7 +193,7 @@ sequenceDiagram
 - **Mobile-friendly UI** — the whole app (bottom tab bar on small screens,
   responsive grids/tables, a header that collapses to icon-only nav for a
   logged-in user) is designed to work cleanly on a phone, not just as a
-  scaled-down desktop layout. See [v2-update.md](v2-update.md).
+  scaled-down desktop layout. See [v1-update.md](v1-update.md).
 - **Wallet network prompts that actually fire** — before any GenLayer or
   Base Sepolia transaction, the connected wallet is checked against the
   chain that action needs and, if it's missing or wrong, walked through an
@@ -212,7 +216,7 @@ sequenceDiagram
   separate chain (Base Sepolia); GenLayer only judges and records amounts
   owed. This replaced an earlier design that escrowed native GEN directly
   in the contract — dropped after review flagged GEN-denominated funding
-  as impractical. See [milestone-v2.md](milestone-v2.md).
+  as impractical. See [milestone-v1.md](milestone-v1.md).
 - Vision input to `gl.nondet.exec_prompt` is the `images` kwarg (plural,
   list of raw bytes) regardless of `response_format` — the runtime's own
   type stubs inconsistently advertise a singular `image=` for JSON mode,
@@ -226,7 +230,7 @@ sequenceDiagram
   redeploys; **always verify with the contract's own `is_admin(<operator
   address>)` read before assuming a fresh deployment needs it** — the
   2026-08-09 migration's new contract already had the operator pre-admitted
-  and needed no fix. See [v2-update.md](v2-update.md).
+  and needed no fix. See [v1-update.md](v1-update.md).
 - `gl.message.sender_address` is the correct sender accessor on current
   GenVM.
 
@@ -238,10 +242,11 @@ funding/claim flow. Highlights:
 - No external dependencies (no OpenZeppelin) — plain Solidity, ~200 lines,
   compiles with bare `solc`.
 - `setWinners` is relayer-only and idempotent per competition — the
-  contract itself refuses a second call for the same id, so the backend's
-  retry sweep can't ever double-credit a payout.
+  contract itself refuses a second call for the same id. A retry reconciles
+  an existing `WinnersSet` receipt instead of re-sending it.
 - Claims are a pull pattern (`claim`/`claimMany`) with
-  checks-effects-interactions and a reentrancy guard — the backend never
+  checks-effects-interactions, a reentrancy guard, and a challenge-deadline
+  time lock — the backend never
   holds or moves a winner's USDC.
 - The owner can rotate the relayer and reclaim only *never-allocated*
   deposits — it can never touch anything already committed to a winner.
@@ -264,16 +269,15 @@ funding/claim flow. Highlights:
   after it in the same try block never ran) — fixed with `readUntilFound`,
   a retrying read (up to 6 attempts, 3s apart) used by all three
   `onchain-confirm` routes, alongside the existing `readSettled` used by
-  the finalize/claim paths. See [milestone-v2.md](milestone-v2.md) for the
+  the finalize/claim paths. See [milestone-v1.md](milestone-v1.md) for the
   full incident writeup.
-- **Cross-machine cron safety** — this app runs 2 Fly machines for 24/7
-  uptime, and each one fires the exact same in-process cron schedule
-  independently. Without a lock, every tick (close/judge/relay/rollover)
-  ran once *per machine* — a real bug that double-triggered on-chain
-  writes in production. Fixed with a Redis-backed distributed lock
+- **Multi-instance cron safety** — every backend instance fires the same
+  in-process cron schedule independently. Without a lock, each tick
+  (close/judge/relay/rollover) would run once per instance. A Redis-backed
+  distributed lock
   ([`withLock`](backend/src/lib/redis.ts)) that self-renews for as long as
   a tick is running (judging can legitimately take minutes) and releases
-  immediately on completion — see [milestone-v2.md](milestone-v2.md).
+  immediately on completion — see [milestone-v1.md](milestone-v1.md).
 - **Duplicate-action safety** — judging is read-before-act: the sweep reads
   on-chain state first and only sends an evaluate tx for genuinely
   un-judged submissions. Duplicate submissions are blocked in the UI, the
@@ -289,7 +293,7 @@ funding/claim flow. Highlights:
   arena's slow judging run can never leave a different, already-expired
   arena stuck open.
 - **Prize relay decoupled from finalize** — relaying winners to the Base
-  Sepolia escrow runs on its own sweep and its own lock, so a slow or
+  Sepolia escrow runs after the challenge period on its own sweep and its own lock, so a slow or
   stuck Base Sepolia RPC can never hold up judging or closing arenas.
 - **genlayer-js quirks** — reads return `Map`s (normalized recursively),
   passing an address (not a private key) to `createClient` signs via the
@@ -304,7 +308,7 @@ funding/claim flow. Highlights:
   a missed tick self-heals next minute but a silently-unlocked tick
   reintroduces the double-trigger bug.
 - **24/7 backend, verified in production** — `auto_stop_machines=false`,
-  `min_machines_running=1`, scaled to 2 machines for redundancy, a
+  `min_machines_running=1`, one always-on machine today, a
   DB-checked `/health` endpoint Fly polls every 30s, and a GitHub Actions
   workflow ([.github/workflows/uptime.yml](.github/workflows/uptime.yml))
   pinging both the API and frontend every 15 minutes with an auto-filed
@@ -314,17 +318,17 @@ funding/claim flow. Highlights:
   closed wallet, dropped network) no longer permanently blocks that user
   from resubmitting; stale pending rows self-heal to `failed` instead of
   silently occupying the 1-per-arena slot forever. See
-  [v2-update.md](v2-update.md).
+  [v1-update.md](v1-update.md).
 - **RESYNC FROM CHAIN no longer re-fires setup writes** — the defense-in-depth
   `set_competition_defaults` call only fires on an arena's first on-chain
   confirm, not on every manual resync, so pressing the resync button on an
   already-confirmed arena can no longer trigger a spurious on-chain error.
-  See [v2-update.md](v2-update.md).
+  See [v1-update.md](v1-update.md).
 - **A transient RPC error can no longer detach a live arena from its
   on-chain lifecycle** — the check that decides whether a competition still
   exists on the current contract now only trusts the contract's own literal
   "not found" message, not generic RPC-layer wrapper text that GenLayer
-  also uses for things like an hourly rate limit. See [v2-update.md](v2-update.md).
+  also uses for things like an hourly rate limit. See [v1-update.md](v1-update.md).
 - **Judging self-heals from a rejected image** — if the AI judge repeatedly
   rejects a submission's image outright (`INVALID_IMAGE`, typically a
   plain, unedited photo of a real person with no meme-format framing), the
@@ -332,7 +336,7 @@ funding/claim flow. Highlights:
   (~3 minutes, one sweep per minute — counted per submission, not by
   elapsed time) instead of leaving it stuck and silently blocking that
   arena's finalization
-  forever. See [v2-update.md](v2-update.md).
+  forever. See [v1-update.md](v1-update.md).
 
 ## Automation (UTC)
 
@@ -341,7 +345,7 @@ funding/claim flow. Highlights:
 | Mon 00:05 | Weekly rollover — opens the new official `week-YYYY-WW` arena on-chain (Redis-locked) |
 | Exact deadline | Per-arena timer closes that arena the instant its deadline hits |
 | Every minute | Fallback close sweep + judge/finalize sweep (both Redis-locked) |
-| Every 2 min | Prize relay sweep — pushes any finalized-but-unrelayed competition's winners to the Base Sepolia escrow (Redis-locked) |
+| Every 2 min | Prize relay sweep — after the challenge period, pushes any finalized-but-unrelayed competition's winners to Base Sepolia (Redis-locked) |
 | Every 15 min | Uptime check (GitHub Actions) — API `/health` + frontend |
 
 ## Repository layout
@@ -364,8 +368,8 @@ frontend/
   src/lib/baseSepolia.ts            # selected EIP-1193 wallet + Base Sepolia tx helpers
   src/app/                          # Next.js 14 App Router pages, Aura Arena design system
 .github/workflows/uptime.yml       # 15-min health check with auto-filed issues
-milestone-v2.md                    # v2 milestone changelog (judging rubric, USDC payments, wallet auth)
-v2-update.md                       # 2026-08-08 changelog: contract migration + production bug fixes
+milestone-v1.md                    # milestone response: lifecycle, settlement, tests
+v1-update.md                       # 2026-10-31 production deployment record
 MEMORY.md                          # living project memory
 ```
 
@@ -388,7 +392,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8080 npm run dev  # :3000
 ## Testing
 
 ```bash
-cd backend && npm test   # vitest — 26 tests, in-memory fake Prisma + fake GenLayer service
+cd backend && npm test   # vitest — 27 tests, in-memory fake Prisma + fake GenLayer service
 ```
 
 Covers the payout-critical lifecycle: no early close/scoring before a
@@ -400,20 +404,18 @@ finalize is on-chain confirmed.
 
 ## Deploying
 
-- **GenLayer contract**: paste `contracts/meme_olympics.py` into
-  [GenLayer Studio](https://studio.genlayer.com) and deploy. Update
-  `GENLAYER_CONTRACT_ADDRESS`. **The new owner must then call
-  `add_admin(<backend operator address>)`** — without this every
-  operator-signed action (close/judge/finalize/relay) fails.
+- **GenLayer contract**: `cd backend && npm run deploy:genlayer`. Wait for
+  `FINALIZED`, then verify owner/admin state with `npm run
+  verify:production-chains` before switching traffic.
 - **Base Sepolia escrow**: see
   [contracts/base/README.md](contracts/base/README.md) — `npm run
   deploy:escrow` from `backend/`, env vars only, never a literal key on
   the command line. Update `MEME_OLYMPICS_ESCROW_ADDRESS`.
-- **Backend**: `cd backend && fly deploy` (secrets via `fly secrets set`,
-  see [.env.example](backend/.env.example)). Runs `prisma migrate deploy`
-  on boot automatically. Scaled to 2 machines
-  (`fly scale count 2`) for 24/7 redundancy — safe because cron ticks are
-  Redis-locked.
+- **Backend**: `cd backend && npm run configure:production-secrets && fly
+  deploy`. The script imports secrets through stdin so private keys never
+  appear in process arguments. Attach PostgreSQL with a non-superuser role;
+  boot runs `prisma migrate deploy` automatically. Cron ticks are
+  Redis-locked, so later horizontal scaling remains safe.
 - **Frontend**: `cd frontend && vercel --prod` with `NEXT_PUBLIC_API_URL`
   and `NEXT_PUBLIC_GENLAYER_CONTRACT_ADDRESS`.
 

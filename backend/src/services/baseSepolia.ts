@@ -79,16 +79,35 @@ export interface OnchainWinner {
 }
 
 /**
- * Push a GenLayer-finalized competition's winners onto the Base Sepolia
- * escrow. Idempotent from the caller's perspective: the contract itself
- * rejects a second setWinners call for the same competitionId, so a retry
- * after a partial failure (e.g. the GenLayer mark_prizes_relayed call
- * failing after this succeeded) is safe to just call again.
+ * Push a settlement-eligible competition's winners onto Base Sepolia. A
+ * retry after Base succeeds but GenLayer's marker fails reconciles the
+ * existing allocation and returns its original receipt rather than calling
+ * setWinners again (which the escrow correctly rejects as one-time only).
  */
+export interface RelayResult {
+  txHash: string;
+  /** True when Base had already committed the exact allocation and this call
+   * recovered its original transaction instead of attempting setWinners again. */
+  reconciled: boolean;
+}
+
+async function findWinnersSetTransaction(
+  contract: ethers.Contract,
+  key: string
+): Promise<string> {
+  const logs = await contract.queryFilter(contract.filters.WinnersSet(key));
+  const log = logs[logs.length - 1];
+  if (!log?.transactionHash) {
+    throw new Error("Escrow shows winners set but its WinnersSet receipt is not yet indexed; retry safely");
+  }
+  return log.transactionHash;
+}
+
 export async function relayWinnersToEscrow(
   competitionId: string,
-  winners: OnchainWinner[]
-): Promise<string> {
+  winners: OnchainWinner[],
+  claimableAfter: bigint
+): Promise<RelayResult> {
   const contract = getRelayerContract();
   const nonZero = winners.filter((w) => BigInt(w.reward_usdc || "0") > BigInt(0));
   if (nonZero.length === 0) {
@@ -98,7 +117,30 @@ export async function relayWinnersToEscrow(
   const amounts = nonZero.map((w) => BigInt(w.reward_usdc));
   const key = competitionIdToBytes32(competitionId);
 
-  const tx = await contract.setWinners(key, addresses, amounts);
+  // Recovery path for the dangerous partial-success window: Base may have
+  // accepted setWinners just before GenLayer's marker write failed. Verify
+  // the already-written allocation and recover its actual transaction hash;
+  // never submit setWinners a second time.
+  const [deposited, allocated, winnersSet, existingClaimableAfter] = await contract.getPool(key);
+  if (winnersSet) {
+    const expected = amounts.reduce((sum, amount) => sum + amount, BigInt(0));
+    if ((allocated as bigint) !== expected || (existingClaimableAfter as bigint) !== claimableAfter) {
+      throw new Error(`Existing Base allocation for ${competitionId} does not match finalized settlement`);
+    }
+    for (let i = 0; i < addresses.length; i++) {
+      const actual = await contract.getClaimable(key, addresses[i]);
+      if ((actual as bigint) !== amounts[i]) {
+        throw new Error(`Existing Base winner allocation for ${competitionId} does not match finalized settlement`);
+      }
+    }
+    // Keep the read so provider/ABI errors are surfaced before we claim
+    // reconciliation succeeded; deposited is intentionally not authoritative
+    // once a pool has had withdrawals of unallocated funds.
+    void deposited;
+    return { txHash: await findWinnersSetTransaction(contract, key), reconciled: true };
+  }
+
+  const tx = await contract.setWinners(key, addresses, amounts, claimableAfter);
   logger.info(
     { competitionId, txHash: tx.hash, winnerCount: addresses.length },
     "relaying winners to Base Sepolia escrow"
@@ -107,17 +149,18 @@ export async function relayWinnersToEscrow(
   if (!receipt || receipt.status !== 1) {
     throw new Error(`setWinners transaction failed for competition ${competitionId}`);
   }
-  return tx.hash as string;
+  return { txHash: tx.hash as string, reconciled: false };
 }
 
 export async function getEscrowPool(competitionId: string) {
   const contract = getReadContract();
   const key = competitionIdToBytes32(competitionId);
-  const [deposited, allocated, winnersSet] = await contract.getPool(key);
+  const [deposited, allocated, winnersSet, claimableAfter] = await contract.getPool(key);
   return {
     deposited: (deposited as bigint).toString(),
     allocated: (allocated as bigint).toString(),
     winnersSet: winnersSet as boolean,
+    claimableAfter: (claimableAfter as bigint).toString(),
   };
 }
 

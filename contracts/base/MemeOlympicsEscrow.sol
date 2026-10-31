@@ -30,6 +30,7 @@ contract MemeOlympicsEscrow {
         uint256 deposited;   // total USDC ever deposited under this competition id
         uint256 allocated;   // total USDC committed to winners via setWinners
         bool winnersSet;     // true once setWinners has run (idempotency gate)
+        uint256 claimableAfter; // Unix time; claims are impossible before settlement
     }
 
     IERC20 public immutable usdc;
@@ -46,7 +47,7 @@ contract MemeOlympicsEscrow {
     // Events
     // ------------------------------------------------------------------
     event Deposited(bytes32 indexed competitionId, address indexed from, uint256 amount);
-    event WinnersSet(bytes32 indexed competitionId, uint256 winnerCount, uint256 totalAllocated);
+    event WinnersSet(bytes32 indexed competitionId, uint256 winnerCount, uint256 totalAllocated, uint256 claimableAfter);
     event Claimed(bytes32 indexed competitionId, address indexed winner, uint256 amount);
     event RelayerUpdated(address indexed newRelayer);
     event OwnerUpdated(address indexed newOwner);
@@ -103,13 +104,19 @@ contract MemeOlympicsEscrow {
     function setWinners(
         bytes32 competitionId,
         address[] calldata winners,
-        uint256[] calldata amounts
+        uint256[] calldata amounts,
+        uint256 claimableAfter
     ) external onlyRelayer {
         require(winners.length == amounts.length, "MemeOlympicsEscrow: length mismatch");
         require(winners.length > 0, "MemeOlympicsEscrow: no winners");
 
         Pool storage pool = pools[competitionId];
         require(!pool.winnersSet, "MemeOlympicsEscrow: winners already set");
+        // The relayer must not make a just-finalized list claimable in the
+        // same Base block. The GenLayer contract supplies the end of its
+        // challenge period; this local guard also makes accidental zero-time
+        // settlement impossible.
+        require(claimableAfter >= block.timestamp, "MemeOlympicsEscrow: claim time is in the past");
 
         uint256 total = 0;
         for (uint256 i = 0; i < amounts.length; i++) {
@@ -123,6 +130,7 @@ contract MemeOlympicsEscrow {
 
         pool.winnersSet = true;
         pool.allocated += total;
+        pool.claimableAfter = claimableAfter;
 
         for (uint256 i = 0; i < winners.length; i++) {
             if (amounts[i] == 0) continue;
@@ -130,13 +138,14 @@ contract MemeOlympicsEscrow {
             totalClaimable[winners[i]] += amounts[i];
         }
 
-        emit WinnersSet(competitionId, winners.length, total);
+        emit WinnersSet(competitionId, winners.length, total, claimableAfter);
     }
 
     // ------------------------------------------------------------------
     // Claims — self-serve pull pattern, checks-effects-interactions.
     // ------------------------------------------------------------------
     function claim(bytes32 competitionId) external nonReentrant {
+        require(block.timestamp >= pools[competitionId].claimableAfter, "MemeOlympicsEscrow: challenge period active");
         uint256 amount = claimable[competitionId][msg.sender];
         require(amount > 0, "MemeOlympicsEscrow: nothing claimable");
 
@@ -154,6 +163,7 @@ contract MemeOlympicsEscrow {
         uint256 total = 0;
         for (uint256 i = 0; i < competitionIds.length; i++) {
             bytes32 id = competitionIds[i];
+            require(block.timestamp >= pools[id].claimableAfter, "MemeOlympicsEscrow: challenge period active");
             uint256 amount = claimable[id][msg.sender];
             if (amount == 0) continue;
             claimable[id][msg.sender] = 0;
@@ -199,9 +209,9 @@ contract MemeOlympicsEscrow {
     // ------------------------------------------------------------------
     // Views
     // ------------------------------------------------------------------
-    function getPool(bytes32 competitionId) external view returns (uint256 deposited, uint256 allocated, bool winnersSet) {
+    function getPool(bytes32 competitionId) external view returns (uint256 deposited, uint256 allocated, bool winnersSet, uint256 claimableAfter) {
         Pool storage pool = pools[competitionId];
-        return (pool.deposited, pool.allocated, pool.winnersSet);
+        return (pool.deposited, pool.allocated, pool.winnersSet, pool.claimableAfter);
     }
 
     function getClaimable(bytes32 competitionId, address winner) external view returns (uint256) {

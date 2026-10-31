@@ -342,6 +342,13 @@ export async function getOnchainCompetition(competitionId: string) {
   return readContract("get_competition", [competitionId]);
 }
 
+/** Contract-authoritative settlement check. This uses GenVM's deterministic
+ * transaction timestamp and unresolved-dispute state; the worker's wall
+ * clock is only an optimization, never the security boundary. */
+export async function canRelayPrizesOnChain(competitionId: string) {
+  return readContract("can_relay_prizes", [competitionId]);
+}
+
 export async function getOnchainLeaderboard(competitionId: string) {
   return readContract("get_leaderboard", [competitionId]);
 }

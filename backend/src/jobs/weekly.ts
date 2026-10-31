@@ -549,8 +549,8 @@ export async function runFinalization() {
 
 /**
  * Push one finalized competition's winners onto the Base Sepolia escrow
- * (real, claimable USDC) and record the relay on GenLayer so it's never
- * attempted twice. A no-op if the escrow isn't configured yet, if there's
+ * (real, claimable USDC) after the on-chain challenge period, and record the
+ * relay on GenLayer so it's never attempted twice. A no-op if the escrow isn't configured yet, if there's
  * nothing to pay out, or if GenLayer already has a relay_tx_hash recorded
  * for this competition (idempotency check before the possibly-costly
  * on-chain call).
@@ -571,6 +571,7 @@ async function relayPrizesToEscrow(
 
   const onchainComp = (await gl.getOnchainCompetition(competitionId)) as {
     relay_tx_hash?: string;
+    challenge_ends_at?: string | number;
   };
   if (onchainComp.relay_tx_hash) {
     // Already relayed on GenLayer — just make sure our own mirror agrees
@@ -580,22 +581,31 @@ async function relayPrizesToEscrow(
       .catch(() => undefined);
     return;
   }
+  const challengeEndsAt = BigInt(onchainComp.challenge_ends_at || 0);
+  // The contract's marker remains the authority and will repeat these
+  // checks. Waiting here avoids submitting a Base allocation that could not
+  // yet be safely marked on GenLayer.
+  if (challengeEndsAt === BigInt(0) || challengeEndsAt > BigInt(Math.floor(Date.now() / 1000))) {
+    return;
+  }
+  if (!(await gl.canRelayPrizesOnChain(competitionId))) return;
 
   // `winners[].author` is now the winner's actual connected wallet — every
   // GenLayer write is signed directly by that wallet (see
   // frontend/src/lib/genlayer.ts), so no address translation is needed
   // before crediting the escrow.
-  const txHash = await escrow.relayWinnersToEscrow(competitionId, winners);
+  const relay = await escrow.relayWinnersToEscrow(competitionId, winners, challengeEndsAt);
+  const txHash = relay.txHash;
   await gl.markPrizesRelayedOnChain(competitionId, txHash);
   await prisma.competition.update({ where: { id: competitionId }, data: { relayTxHash: txHash } });
-  logger.info({ comp: competitionId, txHash }, "prizes relayed to Base Sepolia escrow");
+  logger.info({ comp: competitionId, txHash, reconciled: relay.reconciled }, "prizes relayed to Base Sepolia escrow");
 }
 
 /**
  * Retry relay for any finalized competition GenLayer doesn't yet show a
- * relay_tx_hash for. Catches the case where relayPrizesToEscrow's inline
- * attempt (right after finalize) failed transiently — e.g. Base Sepolia RPC
- * hiccup — without blocking finalization itself on that failure.
+ * relay_tx_hash for. Once the contract-authoritative challenge period has
+ * closed, this catches transient Base RPC failures and partial success where
+ * allocation landed but the GenLayer marker did not.
  */
 export async function runPrizeRelaySweep() {
   if (!gl.isChainConfigured() || !escrow.isEscrowConfigured()) {

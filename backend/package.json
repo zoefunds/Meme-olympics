@@ -12,7 +12,11 @@
     "prisma:migrate": "prisma migrate deploy",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "deploy:escrow": "node ../contracts/base/deploy.js"
+    "deploy:escrow": "node ../contracts/base/deploy.js",
+    "deploy:genlayer": "tsx scripts/deploy-genlayer.ts",
+    "secrets:ensure": "tsx scripts/ensure-runtime-secrets.ts",
+    "verify:production-chains": "tsx scripts/verify-production-chains.ts",
+    "configure:production-secrets": "tsx scripts/set-production-secrets.ts"
   },
   "engines": {
     "node": ">=20"

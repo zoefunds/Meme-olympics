@@ -4,6 +4,7 @@
 import json
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from genlayer import *
 
@@ -106,6 +107,10 @@ MAX_SUBMISSIONS_PER_COMPETITION = 500
 MAX_DISPUTE_REASON_LEN = 1000
 
 USDC_DECIMALS = 6  # prize amounts are stored in USDC's own base units (not atto)
+# Winners cannot become payable until this window has elapsed.  It is a
+# protocol rule, not a scheduler convention: `mark_prizes_relayed` enforces
+# it and the Base escrow also refuses early claims.
+CHALLENGE_PERIOD_SECONDS = 24 * 60 * 60
 
 
 # ----------------------------------------------------------------------------
@@ -140,6 +145,9 @@ class Competition:
     # truth for real funds, this is display/bookkeeping only.
     prize_pool_usdc: u256
     relay_tx_hash: str        # Base Sepolia tx hash once winners were relayed
+    # Appended. Unix seconds, derived from the deterministic GenVM transaction
+    # clock at finalization. Payout relay is forbidden before this moment.
+    challenge_ends_at: u256
 
 
 @allow_storage
@@ -361,6 +369,31 @@ class MemeOlympics(gl.Contract):
         self.competition_submissions_json[competition_id] = json.dumps(
             ids, separators=(",", ":")
         )
+
+    @staticmethod
+    def _timestamp_from_iso(value: str, field: str) -> int:
+        """Parse a user-supplied ISO-8601 timestamp deterministically."""
+        try:
+            normalized = value.replace("Z", "+00:00")
+            parsed = datetime.fromisoformat(normalized)
+            if parsed.tzinfo is None:
+                raise ValueError("timezone required")
+            return int(parsed.astimezone(timezone.utc).timestamp())
+        except (TypeError, ValueError, OverflowError):
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} {field} must be ISO-8601 with timezone")
+
+    @staticmethod
+    def _now_epoch() -> int:
+        # GenVM pins datetime.now() to the transaction datetime, so this is
+        # consensus-safe and cannot be forged by a direct caller.
+        return int(datetime.now(timezone.utc).timestamp())
+
+    def _has_open_dispute(self, competition_id: str) -> bool:
+        for did in self.dispute_ids:
+            dispute = self.disputes[did]
+            if dispute.competition_id == competition_id and dispute.status == DISPUTE_STATUS_OPEN:
+                return True
+        return False
 
     @staticmethod
     def _normalize_url(url: str) -> str:
@@ -673,6 +706,10 @@ class MemeOlympics(gl.Contract):
             raise gl.vm.UserError(f"{ERROR_EXPECTED} title must be 1..{MAX_TITLE_LEN}")
         if len(theme) > MAX_CAPTION_LEN:
             raise gl.vm.UserError(f"{ERROR_EXPECTED} theme too long")
+        start_ts = self._timestamp_from_iso(starts_at, "starts_at")
+        end_ts = self._timestamp_from_iso(ends_at, "ends_at")
+        if end_ts <= start_ts:
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} ends_at must be after starts_at")
 
         self.competitions[competition_id] = Competition(
             id=competition_id,
@@ -690,6 +727,7 @@ class MemeOlympics(gl.Contract):
             winners_json="[]",
             prize_pool_usdc=funded,
             relay_tx_hash="",
+            challenge_ends_at=u256(0),
         )
         self.competition_ids.append(competition_id)
         self.total_competitions = u256(int(self.total_competitions) + 1)
@@ -745,6 +783,10 @@ class MemeOlympics(gl.Contract):
         if comp.status != COMP_STATUS_OPEN:
             raise gl.vm.UserError(
                 f"{ERROR_EXPECTED} Competition is '{comp.status}', expected 'open'"
+            )
+        if self._now_epoch() < self._timestamp_from_iso(comp.ends_at, "ends_at"):
+            raise gl.vm.UserError(
+                f"{ERROR_EXPECTED} Competition deadline has not passed"
             )
         comp.status = COMP_STATUS_JUDGING
         if self.active_competition_id == competition_id:
@@ -1079,7 +1121,7 @@ Return ONLY a JSON object exactly like:
         self._require_not_paused()
         sub = self._get_submission(submission_id)
         comp = self._get_competition(sub.competition_id)
-        if comp.status not in (COMP_STATUS_OPEN, COMP_STATUS_JUDGING):
+        if comp.status != COMP_STATUS_JUDGING:
             raise gl.vm.UserError(
                 f"{ERROR_EXPECTED} Competition is '{comp.status}'; cannot evaluate"
             )
@@ -1297,61 +1339,39 @@ Return ONLY a JSON object exactly like:
             )
 
         sub_ids = self._comp_submission_ids(competition_id)
-        ranked = []
+        # Never rank a convenient subset. Every registered entry must have a
+        # terminal judging result before winner selection is allowed.
         for sid in sub_ids:
             if sid not in self.submissions:
-                continue
-            sub = self.submissions[sid]
-            if sub.status != SUB_STATUS_EVALUATED:
-                continue
-            # Deterministic tiebreak: score desc, then id asc (stable, no clock)
-            ranked.append((-int(sub.total_score), sid))
-        ranked.sort()
-
-        winner_count = min(int(comp.winner_count), len(ranked))
-        pool = int(comp.prize_pool_usdc)
-
-        # Reward split: rank-weighted harmonic-style distribution that always
-        # sums to <= pool using integer math. Weights: 1st=50%, 2nd=30%,
-        # 3rd=20% for 3 winners; generalized as descending shares.
-        shares = self._reward_shares(winner_count)
-        winners = []
-        for index in range(winner_count):
-            sid = ranked[index][1]
-            sub = self.submissions[sid]
-            reward = pool * shares[index] // 10000
-            sub.status = SUB_STATUS_WINNER
-
-            stats = self._touch_user(sub.author)
-            stats.wins = u256(int(stats.wins) + 1)
-            stats.rewards_atto = u256(int(stats.rewards_atto) + reward)
-
-            balance = int(self.reward_balances_atto[sub.author]) if (
-                sub.author in self.reward_balances_atto
-            ) else 0
-            self.reward_balances_atto[sub.author] = u256(balance + reward)
-            self.total_rewards_distributed_atto = u256(
-                int(self.total_rewards_distributed_atto) + reward
+                raise gl.vm.UserError(
+                    f"{ERROR_EXPECTED} Submission record missing: {sid}"
+                )
+            status = self.submissions[sid].status
+            if status not in (
+                SUB_STATUS_EVALUATED,
+                SUB_STATUS_REJECTED,
+                SUB_STATUS_DISQUALIFIED,
+            ):
+                raise gl.vm.UserError(
+                    f"{ERROR_EXPECTED} Submission '{sid}' is '{status}'; judging incomplete"
+                )
+        if self._has_open_dispute(competition_id):
+            raise gl.vm.UserError(
+                f"{ERROR_EXPECTED} Cannot finalize while disputes are unresolved"
             )
-            winners.append(
-                {
-                    "submission_id": sid,
-                    "author": sub.author,
-                    "rank": index + 1,
-                    "score": int(sub.total_score),
-                    "reward_usdc": str(reward),
-                }
-            )
-
-        comp.winners_json = json.dumps(winners, separators=(",", ":"))
+        winners = self._assign_winners(comp)
         comp.status = COMP_STATUS_FINALIZED
-        comp.finalized_at = finalized_at
+        # Do not trust the caller's wall-clock string for settlement timing.
+        # Keep the parameter for ABI compatibility, but persist consensus time.
+        now = self._now_epoch()
+        comp.finalized_at = datetime.fromtimestamp(now, timezone.utc).isoformat()
+        comp.challenge_ends_at = u256(now + CHALLENGE_PERIOD_SECONDS)
         if self.active_competition_id == competition_id:
             self.active_competition_id = ""
 
         self._log(
             "competition_finalized",
-            {"id": competition_id, "winners": len(winners)},
+            {"id": competition_id, "winners": len(winners), "challenge_ends_at": int(comp.challenge_ends_at)},
         )
 
     @staticmethod
@@ -1372,6 +1392,41 @@ Return ONLY a JSON object exactly like:
         shares[0] += 10000 - sum(shares)  # dust to rank 1
         return shares
 
+    def _assign_winners(self, comp: Competition) -> list:
+        """Rank all currently eligible entries and create the provisional
+        winners list. Call only after any old winner allocation has been
+        removed; this is also used after an upheld challenge to promote the
+        next eligible entry before Base settlement."""
+        ranked = []
+        for sid in self._comp_submission_ids(comp.id):
+            if sid in self.submissions:
+                sub = self.submissions[sid]
+                if sub.status == SUB_STATUS_EVALUATED:
+                    ranked.append((-int(sub.total_score), sid))
+        ranked.sort()
+        winner_count = min(int(comp.winner_count), len(ranked))
+        shares = self._reward_shares(winner_count)
+        winners = []
+        for index in range(winner_count):
+            sub = self.submissions[ranked[index][1]]
+            reward = int(comp.prize_pool_usdc) * shares[index] // 10000
+            sub.status = SUB_STATUS_WINNER
+            stats = self._touch_user(sub.author)
+            stats.wins = u256(int(stats.wins) + 1)
+            stats.rewards_atto = u256(int(stats.rewards_atto) + reward)
+            balance = int(self.reward_balances_atto[sub.author]) if sub.author in self.reward_balances_atto else 0
+            self.reward_balances_atto[sub.author] = u256(balance + reward)
+            self.total_rewards_distributed_atto = u256(int(self.total_rewards_distributed_atto) + reward)
+            winners.append({
+                "submission_id": sub.id,
+                "author": sub.author,
+                "rank": index + 1,
+                "score": int(sub.total_score),
+                "reward_usdc": str(reward),
+            })
+        comp.winners_json = json.dumps(winners, separators=(",", ":"))
+        return winners
+
     # ==================================================================
     # Payout relay — NO value moves on this chain. This contract only
     # records that a competition's winners were pushed to the Base Sepolia
@@ -1390,6 +1445,14 @@ Return ONLY a JSON object exactly like:
         if comp.status != COMP_STATUS_FINALIZED:
             raise gl.vm.UserError(
                 f"{ERROR_EXPECTED} Competition is '{comp.status}', expected 'finalized'"
+            )
+        if self._now_epoch() < int(comp.challenge_ends_at):
+            raise gl.vm.UserError(
+                f"{ERROR_EXPECTED} Challenge period is still open"
+            )
+        if self._has_open_dispute(competition_id):
+            raise gl.vm.UserError(
+                f"{ERROR_EXPECTED} Cannot relay prizes while disputes are unresolved"
             )
         if comp.relay_tx_hash:
             raise gl.vm.UserError(
@@ -1424,6 +1487,14 @@ Return ONLY a JSON object exactly like:
         evidence ON-CHAIN — user-submitted text alone never decides."""
         self._require_not_paused()
         sub = self._get_submission(submission_id)
+        comp = self._get_competition(sub.competition_id)
+        if (
+            comp.status == COMP_STATUS_FINALIZED
+            and self._now_epoch() >= int(comp.challenge_ends_at)
+        ):
+            raise gl.vm.UserError(
+                f"{ERROR_EXPECTED} Challenge period has ended"
+            )
         if sub.status not in (SUB_STATUS_EVALUATED, SUB_STATUS_WINNER):
             raise gl.vm.UserError(
                 f"{ERROR_EXPECTED} Only evaluated or winning submissions can be disputed"
@@ -1540,6 +1611,7 @@ Return ONLY JSON: {{"uphold": true/false, "confidence": 0-100, "summary": "1-2 s
         if dispute.status != DISPUTE_STATUS_OPEN:
             raise gl.vm.UserError(f"{ERROR_EXPECTED} Dispute already resolved")
         sub = self._get_submission(dispute.submission_id)
+        comp = self._get_competition(sub.competition_id)
 
         dispute_snapshot = Dispute(
             id=dispute.id,
@@ -1629,9 +1701,12 @@ Return ONLY JSON: {{"uphold": true/false, "confidence": 0-100, "summary": "1-2 s
             stats = self._touch_user(sub.author)
             stats.disqualifications = u256(int(stats.disqualifications) + 1)
 
-            # Claw back rewards if the submission had already won.
+            # A provisional winner can be disqualified only while settlement
+            # is still locked. Re-rank the entire eligible field so the next
+            # valid entry is promoted and the full prize allocation remains
+            # fair before anything can be claimed on Base.
             if previous_status == SUB_STATUS_WINNER:
-                self._claw_back_reward(sub)
+                self._rebalance_provisional_winners(comp)
         else:
             dispute.status = DISPUTE_STATUS_REJECTED
 
@@ -1642,42 +1717,29 @@ Return ONLY JSON: {{"uphold": true/false, "confidence": 0-100, "summary": "1-2 s
             {"id": dispute_id, "u": result["uphold"]},
         )
 
-    def _claw_back_reward(self, sub: Submission) -> None:
-        """Remove a disqualified winner's declared USDC reward from the
-        judging-side ledger (deterministic).
-
-        Limitation: this only updates GenLayer's own bookkeeping. If the
-        competition was already `mark_prizes_relayed` and the winner has
-        since claimed real USDC from the Base Sepolia escrow contract, that
-        payout cannot be reversed here — this contract never held the funds
-        in the first place. Disputes against already-relayed competitions
-        need a corresponding action on the escrow contract (out of scope for
-        this record) or off-chain remediation; the balance below is bounded
-        at 0 rather than going negative."""
-        comp = self._get_competition(sub.competition_id)
+    def _rebalance_provisional_winners(self, comp: Competition) -> None:
+        """Undo the previous provisional allocation and assign a fresh,
+        deterministic winners list. `mark_prizes_relayed` is impossible while
+        a dispute is open, so no Base allocation can exist at this point."""
         try:
             winners = json.loads(comp.winners_json)
         except (ValueError, TypeError):
             winners = []
-        remaining = []
         for w in winners:
-            if w.get("submission_id") == sub.id:
-                reward = int(w.get("reward_usdc", w.get("reward_atto", "0")))
-                balance = int(self.reward_balances_atto[sub.author]) if (
-                    sub.author in self.reward_balances_atto
-                ) else 0
-                self.reward_balances_atto[sub.author] = u256(
-                    max(0, balance - reward)
-                )
-                stats = self._touch_user(sub.author)
-                stats.rewards_atto = u256(max(0, int(stats.rewards_atto) - reward))
-                stats.wins = u256(max(0, int(stats.wins) - 1))
-                self.total_rewards_distributed_atto = u256(
-                    max(0, int(self.total_rewards_distributed_atto) - reward)
-                )
-            else:
-                remaining.append(w)
-        comp.winners_json = json.dumps(remaining, separators=(",", ":"))
+            sid = str(w.get("submission_id", ""))
+            if sid not in self.submissions:
+                continue
+            old_winner = self.submissions[sid]
+            reward = int(w.get("reward_usdc", w.get("reward_atto", "0")))
+            balance = int(self.reward_balances_atto[old_winner.author]) if old_winner.author in self.reward_balances_atto else 0
+            self.reward_balances_atto[old_winner.author] = u256(max(0, balance - reward))
+            stats = self._touch_user(old_winner.author)
+            stats.rewards_atto = u256(max(0, int(stats.rewards_atto) - reward))
+            stats.wins = u256(max(0, int(stats.wins) - 1))
+            self.total_rewards_distributed_atto = u256(max(0, int(self.total_rewards_distributed_atto) - reward))
+            if old_winner.status == SUB_STATUS_WINNER:
+                old_winner.status = SUB_STATUS_EVALUATED
+        self._assign_winners(comp)
 
     # ==================================================================
     # Views — read-only, no gas surprises
@@ -1735,7 +1797,20 @@ Return ONLY JSON: {{"uphold": true/false, "confidence": 0-100, "summary": "1-2 s
             "finalized_at": comp.finalized_at,
             "winners": json.loads(comp.winners_json or "[]"),
             "relay_tx_hash": comp.relay_tx_hash,
+            "challenge_ends_at": int(comp.challenge_ends_at),
+            "challenge_period_seconds": CHALLENGE_PERIOD_SECONDS,
         }
+
+    @gl.public.view
+    def can_relay_prizes(self, competition_id: str) -> bool:
+        """True only when the contract itself would accept the relay marker."""
+        comp = self._get_competition(competition_id)
+        return (
+            comp.status == COMP_STATUS_FINALIZED
+            and not comp.relay_tx_hash
+            and self._now_epoch() >= int(comp.challenge_ends_at)
+            and not self._has_open_dispute(competition_id)
+        )
 
     @gl.public.view
     def get_active_competition(self) -> dict:
