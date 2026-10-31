@@ -91,9 +91,12 @@ pool before displaying the arena as funded.
 - `contracts/base/E2E_EVIDENCE.md`: recorded live 1 USDC approval, funding,
   allocation, and claim receipts against the current escrow
 
-All suites pass in the submitted state.
-The four-job GitHub Actions CI workflow reruns backend, frontend, GenLayer,
-and Foundry verification on pushes and pull requests.
+All suites pass locally in the submitted state. The four-job GitHub Actions
+workflow is configured for backend, frontend, GenLayer, and Foundry
+verification on pushes and pull requests. GitHub parses the workflow and
+creates the jobs, but its hosted runners are currently suspended by an account
+billing lock; the latest affected run is
+[`41208731626`](https://github.com/zoefunds/Meme-olympics/actions/runs/41208731626).
 
 ## Current production deployment
 
@@ -104,7 +107,7 @@ and Foundry verification on pushes and pull requests.
 - Base Sepolia USDC: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
 - Base owner/relayer: `0x3ac70057A8Dd00Fcd590a6Bb59ce94D1222659dC`
 - Production contract source commit: `bc32626`
-- Vercel deployment: `dpl_Bufb6vHTnJH44JPsx2e1WMjrnmUM`
+- Vercel deployment: `dpl_6Unny8f8ckHQ6ydrKioWsZrq8rEt`
 
 The production backend and PostgreSQL health checks pass. The production chain
 verification confirms GenLayer owner/admin authority and Base escrow

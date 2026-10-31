@@ -16,7 +16,7 @@ corrections are deployed at the addresses below.
   `0x3ac70057A8Dd00Fcd590a6Bb59ce94D1222659dC`
 - GenLayer deployment transaction:
   `0xaee194c6473854ae28e81596570bb566f56ce9fd61cad3f39a1ad2e01c941db4`
-- Vercel production deployment: `dpl_Bufb6vHTnJH44JPsx2e1WMjrnmUM`
+- Vercel production deployment: `dpl_6Unny8f8ckHQ6ydrKioWsZrq8rEt`
 
 The Fly backend was recreated in the current account and switched to a fresh,
 least-privilege PostgreSQL attachment. Old database contents were intentionally
@@ -53,7 +53,8 @@ attach` so the deploy script cannot overwrite it with a local or retired URL.
   for claims completed before the GenLayer marker retry.
 - validator transient failures are fail-closed rather than accepted as
   agreement when independent re-evaluation did not complete;
-- CI now runs backend, frontend, GenLayer contract/policy, and Foundry jobs.
+- CI now defines backend, frontend, GenLayer contract/policy, and Foundry jobs;
+  GitHub accepts the workflow, but hosted execution is currently billing-locked.
 
 ## Deployment tooling
 
@@ -80,3 +81,5 @@ attach` so the deploy script cannot overwrite it with a local or retired URL.
 - Vercel production deployment: ready and aliased
 - Live chain ownership/configuration audit: passing
 - Production contract source commit `bc32626`: pushed to `main`
+- GitHub CI workflow: parsed and four jobs created; hosted runner execution is
+  account-billing-blocked in run `41208731626` (local equivalents pass)

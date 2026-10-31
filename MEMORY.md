@@ -21,7 +21,7 @@ and retired architectures have deliberately been removed.
 - Base relayer/escrow owner:
   `0x3ac70057A8Dd00Fcd590a6Bb59ce94D1222659dC`
 - Production contract source commit: `bc32626`
-- Vercel production deployment: `dpl_Bufb6vHTnJH44JPsx2e1WMjrnmUM`
+- Vercel production deployment: `dpl_6Unny8f8ckHQ6ydrKioWsZrq8rEt`
 - Recorded Base settlement proof:
   [`contracts/base/E2E_EVIDENCE.md`](contracts/base/E2E_EVIDENCE.md)
 - GenLayer deployment transaction:
@@ -112,8 +112,11 @@ lifecycle + 2 validator-policy), Base escrow **3/3**.
 
 The backend total includes claim-aware reconciliation coverage for a winner
 who claims before GenLayer marker recovery and for inconsistent claim history.
-The repository CI runs backend, frontend, GenLayer, and Foundry verification
-on pushes to `main`, pull requests, and manual dispatch.
+The repository CI defines backend, frontend, GenLayer, and Foundry verification
+for pushes to `main`, pull requests, and manual dispatch. GitHub parses it and
+creates all four jobs, but hosted runners are currently suspended by an
+account billing lock. The latest affected run is `41208731626`; all equivalent
+commands pass locally.
 
 ## Operational rules
 

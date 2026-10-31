@@ -119,7 +119,7 @@ explicitly; it is not represented as a real adjudicated competition.
 - API health: https://meme-olympics-api-v2-gideon.fly.dev/health
 - Live app: https://meme-olympics.vercel.app
 - Production contract source commit: `bc32626`
-- Vercel deployment: `dpl_Bufb6vHTnJH44JPsx2e1WMjrnmUM`
+- Vercel deployment: `dpl_6Unny8f8ckHQ6ydrKioWsZrq8rEt`
 - GenLayer contract: `0xC91AA2316235D6a1cCd6804Ad1cC85D29E6F14ea`
 - GenLayer deployment transaction:
   `0xaee194c6473854ae28e81596570bb566f56ce9fd61cad3f39a1ad2e01c941db4`
@@ -127,6 +127,10 @@ explicitly; it is not represented as a real adjudicated competition.
 - Base owner/relayer: `0x3ac70057A8Dd00Fcd590a6Bb59ce94D1222659dC`
 - CI: backend, frontend, GenLayer, and Foundry jobs in
   [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
+- CI execution status: GitHub accepts the workflow and creates all four jobs,
+  but hosted runners are currently blocked by an account billing lock; latest
+  affected run [`41208731626`](https://github.com/zoefunds/Meme-olympics/actions/runs/41208731626).
+  The listed verification commands pass locally.
 
 The live verification script confirms that the configured GenLayer operator is
 the contract owner/admin and that the configured Base escrow has deployed

@@ -15,7 +15,7 @@ corrections documented in [REVIEW.md](REVIEW.md).
 
 Current production contract source: Git commit `bc32626`, deployed and
 verified on 2026-10-31. Vercel deployment:
-`dpl_Bufb6vHTnJH44JPsx2e1WMjrnmUM`.
+`dpl_6Unny8f8ckHQ6ydrKioWsZrq8rEt`.
 
 Anyone can host an arena — set a theme, a deadline, and an optional real
 USDC prize pool. Anyone can submit one meme per arena. When an arena's
@@ -323,11 +323,11 @@ funding/claim flow. Highlights:
   a missed tick self-heals next minute but a silently-unlocked tick
   reintroduces the double-trigger bug.
 - **24/7 backend, verified in production** — `auto_stop_machines=false`,
-  `min_machines_running=1`, one always-on machine today, a
-  DB-checked `/health` endpoint Fly polls every 30s, and a GitHub Actions
-  workflow ([.github/workflows/uptime.yml](.github/workflows/uptime.yml))
-  pinging both the API and frontend every 15 minutes with an auto-filed
-  GitHub issue on failure.
+  `min_machines_running=1`, one always-on machine today, and a DB-checked
+  `/health` endpoint Fly polls every 30s. A scheduled uptime workflow
+  ([.github/workflows/uptime.yml](.github/workflows/uptime.yml)) is configured
+  to ping both public endpoints every 15 minutes and file an issue on failure;
+  GitHub-hosted execution is currently suspended by an account billing lock.
 - **DB state now follows on-chain truth, not the other way round** — a
   submission row that never actually confirmed on-chain (rejected tx,
   closed wallet, dropped network) no longer permanently blocks that user
@@ -371,15 +371,17 @@ funding/claim flow. Highlights:
 | Exact deadline | Per-arena timer closes that arena the instant its deadline hits |
 | Every minute | Fallback close sweep + judge/finalize sweep (both Redis-locked) |
 | Every 2 min | Prize relay sweep — after the challenge period, pushes any finalized-but-unrelayed competition's winners to Base Sepolia (Redis-locked) |
-| Every 15 min | Uptime check (GitHub Actions) — API `/health` + frontend |
+| Every 15 min | Configured uptime check — API `/health` + frontend; GitHub-hosted runs currently billing-blocked |
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs on every push to `main`, every pull request,
-and manual dispatch. Independent jobs run all backend tests/type checks/build,
-the frontend production build, GenLayer lifecycle and validator-policy tests,
-and Foundry escrow tests. Dependency caches and pinned GenLayer test packages
-keep the workflow reproducible.
+`.github/workflows/ci.yml` triggers on every push to `main`, every pull
+request, and manual dispatch. It defines independent backend, frontend,
+GenLayer, and Foundry jobs with dependency caches and pinned GenLayer test
+packages. All equivalent commands pass locally. GitHub accepts the workflow
+and creates all four jobs, but currently starts none because the repository
+owner's GitHub account is locked for a billing issue; latest affected run:
+[`41208731626`](https://github.com/zoefunds/Meme-olympics/actions/runs/41208731626).
 
 ## Repository layout
 

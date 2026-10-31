@@ -138,6 +138,20 @@ gl.vm.run_nondet_unsafe(leader_fn, validator_fn)`}</pre>
             <br />
             Base escrow: 0x951773259a9c90bE6DCfB5C9E4aedA9fBe89F10c
           </p>
+          <p className="text-sm text-on-variant mt-5">
+            A live 1 USDC Base Sepolia proof completed approval, funding,
+            winner allocation, and self-service claim with zero residual
+            claimable balance. View the{" "}
+            <a
+              href="https://sepolia.basescan.org/tx/0x9551c00dcd81e42de84a9971eea36989d6f6512758bd8979921b3432d201d505"
+              target="_blank"
+              rel="noreferrer"
+              className="text-cyan hover:underline"
+            >
+              successful claim receipt
+            </a>
+            .
+          </p>
         </GlassCard>
       </section>
 
