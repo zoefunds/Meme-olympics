@@ -98,6 +98,9 @@ hashes. It verifies the allocated pool/deadline, then proves completion by
 checking the winner's exact USDC balance increase and zero residual claimable
 balance after the claim.
 
+A completed live run, including transaction hashes, block numbers, final
+state, and its precise scope, is recorded in [E2E_EVIDENCE.md](E2E_EVIDENCE.md).
+
 Automated recovery coverage is in
 `backend/src/services/baseSepolia.test.ts`; the tests include a fully claimed
 award before marker recovery and rejection of inconsistent claim history.

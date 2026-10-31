@@ -88,6 +88,8 @@ pool before displaying the arena as funded.
 - `contracts/base/test/MemeOlympicsEscrow.t.sol`: 3 Foundry escrow tests
 - `contracts/base/e2e-example.js`: funded allocation and successful claim
   example for Base Sepolia
+- `contracts/base/E2E_EVIDENCE.md`: recorded live 1 USDC approval, funding,
+  allocation, and claim receipts against the current escrow
 
 All suites pass in the submitted state.
 The four-job GitHub Actions CI workflow reruns backend, frontend, GenLayer,
@@ -101,7 +103,7 @@ and Foundry verification on pushes and pull requests.
 - Base escrow: `0x951773259a9c90bE6DCfB5C9E4aedA9fBe89F10c`
 - Base Sepolia USDC: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
 - Base owner/relayer: `0x3ac70057A8Dd00Fcd590a6Bb59ce94D1222659dC`
-- Production source commit: `2cd8f68`
+- Production contract source commit: `bc32626`
 - Vercel deployment: `dpl_Bufb6vHTnJH44JPsx2e1WMjrnmUM`
 
 The production backend and PostgreSQL health checks pass. The production chain

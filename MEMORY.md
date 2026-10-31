@@ -20,8 +20,10 @@ and retired architectures have deliberately been removed.
 - Fly PostgreSQL app: `meme-olympics-db-v2-gideon`
 - Base relayer/escrow owner:
   `0x3ac70057A8Dd00Fcd590a6Bb59ce94D1222659dC`
-- Production source commit: `2cd8f68`
+- Production contract source commit: `bc32626`
 - Vercel production deployment: `dpl_Bufb6vHTnJH44JPsx2e1WMjrnmUM`
+- Recorded Base settlement proof:
+  [`contracts/base/E2E_EVIDENCE.md`](contracts/base/E2E_EVIDENCE.md)
 - GenLayer deployment transaction:
   `0xaee194c6473854ae28e81596570bb566f56ce9fd61cad3f39a1ad2e01c941db4`
 

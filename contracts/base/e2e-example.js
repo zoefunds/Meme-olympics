@@ -4,7 +4,14 @@
  * required testnet-only environment variables. This intentionally never logs
  * private keys.
  */
-const { ethers } = require("ethers");
+const { createRequire } = require("node:module");
+const { resolve } = require("node:path");
+
+// The documented command runs this repository-owned script from `backend/`,
+// whose package manifest owns the ethers dependency. Resolve from that
+// manifest so Node does not search only contracts/base/node_modules.
+const backendRequire = createRequire(resolve(__dirname, "../../backend/package.json"));
+const { ethers } = backendRequire("ethers");
 
 function required(name) {
   const value = process.env[name];
@@ -47,16 +54,16 @@ async function main() {
   const hostEscrow = new ethers.Contract(escrowAddress, escrow, host);
 
   const approve = await usdc.approve(escrowAddress, amount);
-  await approve.wait();
-  console.log("approved:", approve.hash);
+  const approveReceipt = await approve.wait();
+  console.log("approved:", approve.hash, "block:", approveReceipt.blockNumber);
   const deposit = await hostEscrow.fundCompetition(key, amount);
-  await deposit.wait();
-  console.log("deposited:", deposit.hash);
+  const depositReceipt = await deposit.wait();
+  console.log("deposited:", deposit.hash, "block:", depositReceipt.blockNumber);
 
   const relayerEscrow = hostEscrow.connect(relayer);
   const allocation = await relayerEscrow.setWinners(key, [winner.address], [amount], unlockAt);
-  await allocation.wait();
-  console.log("allocated:", allocation.hash);
+  const allocationReceipt = await allocation.wait();
+  console.log("allocated:", allocation.hash, "block:", allocationReceipt.blockNumber);
   const pool = await hostEscrow.getPool(key);
   const claimable = await hostEscrow.getClaimable(key, winner.address);
   if (pool[1] !== amount || claimable !== amount || pool[3] !== unlockAt) {
@@ -66,13 +73,13 @@ async function main() {
   const winnerBalanceBefore = await usdc.balanceOf(winner.address);
   const winnerEscrow = hostEscrow.connect(winner);
   const claim = await winnerEscrow.claim(key);
-  await claim.wait();
+  const claimReceipt = await claim.wait();
   const winnerBalanceAfter = await usdc.balanceOf(winner.address);
   const remainingClaimable = await hostEscrow.getClaimable(key, winner.address);
   if (winnerBalanceAfter - winnerBalanceBefore !== amount || remainingClaimable !== 0n) {
     throw new Error("Claim verification failed: winner balance/claimable state mismatch");
   }
-  console.log("claimed:", claim.hash);
+  console.log("claimed:", claim.hash, "block:", claimReceipt.blockNumber);
   console.log("verified winner USDC increase:", amount.toString());
 }
 

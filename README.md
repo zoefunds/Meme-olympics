@@ -8,11 +8,12 @@ in real USDC on Base Sepolia — not likes, not votes, only logic.**
 - **GenLayer Intelligent Contract (StudioNet):** `0xC91AA2316235D6a1cCd6804Ad1cC85D29E6F14ea`
 - **MemeOlympicsEscrow (Base Sepolia):** `0x951773259a9c90bE6DCfB5C9E4aedA9fBe89F10c`
 - **USDC (Base Sepolia, Circle official):** `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
+- **Recorded live settlement:** [approve → fund → allocate → claim evidence](contracts/base/E2E_EVIDENCE.md)
 
 These are the current production contracts containing the settlement
 corrections documented in [REVIEW.md](REVIEW.md).
 
-Current production application release: Git commit `2cd8f68`, deployed and
+Current production contract source: Git commit `bc32626`, deployed and
 verified on 2026-10-31. Vercel deployment:
 `dpl_Bufb6vHTnJH44JPsx2e1WMjrnmUM`.
 

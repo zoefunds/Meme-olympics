@@ -104,6 +104,12 @@ already-passed contract challenge deadline, claim, and verify the pool,
 claimable state, and winner USDC balance increase. Instructions are in
 [`contracts/base/README.md`](contracts/base/README.md).
 
+A live 1 USDC execution against the current Base Sepolia escrow is recorded
+in [`contracts/base/E2E_EVIDENCE.md`](contracts/base/E2E_EVIDENCE.md), with all
+four successful transaction receipts, block numbers, explorer links, and
+zero residual claimable balance. Its synthetic escrow-test scope is stated
+explicitly; it is not represented as a real adjudicated competition.
+
 ## 6. Verification and production evidence
 
 - Backend Vitest suite: **32/32 passing**
@@ -112,7 +118,7 @@ claimable state, and winner USDC balance increase. Instructions are in
 - Frontend production build: passing
 - API health: https://meme-olympics-api-v2-gideon.fly.dev/health
 - Live app: https://meme-olympics.vercel.app
-- Production source commit: `2cd8f68`
+- Production contract source commit: `bc32626`
 - Vercel deployment: `dpl_Bufb6vHTnJH44JPsx2e1WMjrnmUM`
 - GenLayer contract: `0xC91AA2316235D6a1cCd6804Ad1cC85D29E6F14ea`
 - GenLayer deployment transaction:

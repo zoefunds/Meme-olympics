@@ -74,7 +74,9 @@ attach` so the deploy script cannot overwrite it with a local or retired URL.
 - Base escrow: 3/3 tests
 - Frontend: production build successful
 - Fly API check: passing
+- Live Base settlement: 1 USDC approved, funded, allocated, and claimed;
+  transaction evidence is in `contracts/base/E2E_EVIDENCE.md`
 - Fly PostgreSQL checks: 3/3 passing
 - Vercel production deployment: ready and aliased
 - Live chain ownership/configuration audit: passing
-- Production source commit `2cd8f68`: pushed to `main`
+- Production contract source commit `bc32626`: pushed to `main`
