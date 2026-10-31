@@ -50,6 +50,18 @@ contract MemeOlympicsEscrowTest {
         escrow.setWinners(COMPETITION, _one(WINNER), _one(1_000_000), block.timestamp + 1);
     }
 
+    function testAllocationAndClaimAfterChallengePeriod() public {
+        uint256 release = block.timestamp + 1 days;
+        vm.warp(release + 1);
+
+        vm.prank(RELAYER);
+        escrow.setWinners(COMPETITION, _one(WINNER), _one(1_000_000), release);
+
+        vm.prank(WINNER);
+        escrow.claim(COMPETITION);
+        require(token.balanceOf(WINNER) == 1_000_000, "post-challenge claim failed");
+    }
+
     function _one(address item) private pure returns (address[] memory result) {
         result = new address[](1);
         result[0] = item;

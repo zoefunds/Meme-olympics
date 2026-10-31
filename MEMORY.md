@@ -2,8 +2,9 @@
 
 Last verified: **2026-10-31**.
 
-This file contains only current operational facts. Historical deployment
-addresses and retired architectures have deliberately been removed.
+This file contains current operational facts. The listed chain addresses run
+the preceding release; the repository head contains a tested contract update
+that still requires coordinated redeployment.
 
 ## Production
 
@@ -43,12 +44,16 @@ not migrated.
    winners and allocations on GenLayer.
 7. Only after the challenge window closes and no dispute remains open may the
    relayer call Base `setWinners`. Base claims are independently time-locked by
-   the same `claimableAfter` timestamp.
+   the same `claimableAfter` timestamp. A deadline already passed at allocation
+   time is valid and makes the award immediately claimable.
 8. If Base allocation succeeds but the GenLayer relay marker fails, retries
    verify the existing pool and recover the original `WinnersSet` transaction
    instead of resending the one-time allocation.
 9. Winners call `claim` or `claimMany` directly from their own wallet. The
    backend never custodies prize money.
+10. The relay re-reads winners from GenLayer immediately before Base
+    allocation. Repeatedly undecodable images become terminal only through the
+    contract's admin-only, reason-bearing recovery call.
 
 ## Contract authority
 
@@ -87,8 +92,8 @@ cd ../../frontend
 npm run build
 ```
 
-Current verified counts: backend **27/27**, GenLayer lifecycle **3/3**, Base
-escrow **2/2**.
+Current verified counts: backend **29/29**, GenLayer lifecycle **4/4**, Base
+escrow **3/3**.
 
 ## Operational rules
 

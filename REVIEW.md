@@ -1,7 +1,8 @@
 # Steward review remediation
 
-Status: **implemented, tested, deployed, and production-switched on
-2026-10-31**.
+Status: **implemented and tested on 2026-10-31; coordinated GenLayer/Base
+redeployment pending**. The production addresses below still run the preceding
+release and must not be described as containing the final three fixes.
 
 This document maps every material issue from the milestone review to its
 current implementation and verification evidence.
@@ -22,7 +23,9 @@ lifecycle:
 Adversarial coverage is in
 [`contracts/tests/test_lifecycle_guards.py`](contracts/tests/test_lifecycle_guards.py):
 premature closure, evaluation while open, and finalization with incomplete
-judging all fail at the contract boundary. Current result: **3/3 passing**.
+judging all fail at the contract boundary. The suite also proves that a
+repeatedly undecodable image can be terminally disqualified on-chain and the
+arena can then finalize. Current result: **4/4 passing**.
 
 ## 2. Challenge-safe settlement
 
@@ -35,14 +38,21 @@ Finalization creates provisional winners and a contract-derived 24-hour
   promotes/reallocates the next eligible winner;
 - `mark_prizes_relayed` is rejected before the challenge deadline.
 
-The Base escrow mirrors the same safety boundary. `setWinners` records a
-`claimableAfter` value and `claim`/`claimMany` reject early withdrawals. This
+The Base escrow mirrors the same safety boundary. `setWinners` records the
+authoritative `claimableAfter` even when the worker submits the allocation
+after that timestamp has passed; the allocation is then immediately
+claimable. `claim`/`claimMany` still reject withdrawals before the deadline. This
 means no Base payout becomes irreversible while a financially consequential
 GenLayer challenge can still change the winner set.
 
 Escrow coverage is in
 [`contracts/base/test/MemeOlympicsEscrow.t.sol`](contracts/base/test/MemeOlympicsEscrow.t.sol).
-Current result: **2/2 passing**.
+Current result: **3/3 passing**.
+
+Immediately before Base allocation, the worker re-reads the authoritative
+GenLayer winners, reconciles its database cache, and pays that list. An upheld
+post-finalization dispute therefore changes the Base recipient rather than
+leaving the original cached finalist in place.
 
 ## 3. Partial cross-chain recovery
 
@@ -74,16 +84,17 @@ stage. Instructions are in
 
 ## 6. Verification and production evidence
 
-- Backend Vitest suite: **27/27 passing**
-- GenLayer adversarial lifecycle tests: **3/3 passing**
-- Foundry escrow tests: **2/2 passing**
+- Backend Vitest suite: **29/29 passing**
+- GenLayer adversarial lifecycle tests: **4/4 passing**
+- Foundry escrow tests: **3/3 passing**
 - Frontend production build: passing
 - API health: https://meme-olympics-api-v2-gideon.fly.dev/health
 - Live app: https://meme-olympics.vercel.app
-- GenLayer contract:
+- Currently live GenLayer contract (preceding release):
   `0x5BDD6676c2f3cc2e04356A61b6Fc9Cd621f1d023`
-- Base escrow: `0x372582652fc0aa9407B426a8779ee92dA5859Cf8`
+- Currently live Base escrow (preceding release):
+  `0x372582652fc0aa9407B426a8779ee92dA5859Cf8`
 
-The live verification script confirms that the configured GenLayer operator is
+The live verification script for the preceding release confirms that the configured GenLayer operator is
 the contract owner/admin and that the configured Base escrow has deployed
 bytecode with the expected owner, relayer, and Circle Base Sepolia USDC.

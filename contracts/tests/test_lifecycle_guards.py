@@ -54,3 +54,19 @@ def test_rejects_finalization_with_pending_submission(arena):
     contract.close_submissions("arena-guard")
     with vm.expect_revert("judging incomplete"):
         contract.finalize_competition("arena-guard", "caller-controlled-time-is-ignored")
+
+
+def test_terminal_invalid_image_recovery_allows_finalization(arena):
+    vm, contract = arena
+    vm.warp("2030-01-02T00:00:01+00:00")
+    contract.close_submissions("arena-guard")
+    contract.disqualify_unjudgeable_submission(
+        "entry-guard", "Repeated INVALID_IMAGE after three validator attempts"
+    )
+
+    submission = contract.get_submission("entry-guard")
+    assert submission["status"] == "disqualified"
+    assert "INVALID_IMAGE" in submission["evaluation_summary"]
+
+    contract.finalize_competition("arena-guard", "ignored")
+    assert contract.get_competition("arena-guard")["status"] == "finalized"

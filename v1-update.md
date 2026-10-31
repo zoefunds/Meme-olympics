@@ -1,6 +1,8 @@
-# Production update — 2026-10-31
+# Release update — 2026-10-31
 
-This supersedes earlier migration notes and retired deployment addresses.
+This supersedes earlier source notes. The tested source includes three final
+settlement corrections, but the listed addresses remain the preceding live
+release until a coordinated GenLayer/Base migration is completed.
 
 ## Deployment
 
@@ -34,6 +36,12 @@ attach` so the deploy script cannot overwrite it with a local or retired URL.
 - Base claim time lock using the authoritative challenge timestamp;
 - partial relay recovery when Base succeeds before the GenLayer marker;
 - Base deposit receipt and escrow-pool verification before showing “funded.”
+- post-challenge Base allocation accepts the already-passed authoritative
+  deadline and is immediately claimable;
+- settlement re-reads authoritative post-dispute winners instead of cached
+  finalization JSON;
+- repeated `INVALID_IMAGE` reaches an audited terminal on-chain
+  disqualification before the database mirrors it.
 
 ## Deployment tooling
 
@@ -48,9 +56,9 @@ attach` so the deploy script cannot overwrite it with a local or retired URL.
 
 ## Verified results
 
-- Backend: 27/27 tests
-- GenLayer lifecycle: 3/3 tests
-- Base escrow: 2/2 tests
+- Backend: 29/29 tests
+- GenLayer lifecycle: 4/4 tests
+- Base escrow: 3/3 tests
 - Frontend: production build successful
 - Fly API check: passing
 - Fly PostgreSQL checks: 3/3 passing

@@ -409,22 +409,43 @@ export async function runJudgingSweep() {
       if (/INVALID_IMAGE/.test(msg)) {
         const attempts = sub.invalidImageAttempts + 1;
         if (attempts >= MAX_INVALID_IMAGE_ATTEMPTS) {
-          await prisma.submission.update({
-            where: { id: sub.id },
-            data: {
-              status: "disqualified",
-              invalidImageAttempts: attempts,
-              evaluationSummary:
-                `Auto-disqualified: the AI judge rejected this image as invalid ` +
-                `(GenLayer INVALID_IMAGE) on ${attempts} consecutive attempts. This usually ` +
-                `means a plain, unedited photo of a real person with no meme-format framing ` +
-                `(caption/template/comic context).`,
-            },
-          });
-          logger.warn(
-            { sub: sub.id, attempts },
-            "auto-disqualified: repeated INVALID_IMAGE from judge"
-          );
+          const reason =
+            `Auto-disqualified after ${attempts} consecutive INVALID_IMAGE responses: ` +
+            `the validator runtime could not decode this entry as a judgeable meme.`;
+          try {
+            await gl.disqualifyUnjudgeableSubmissionOnChain(sub.id, reason);
+            const terminal = await gl.readSettled<{ status: string; evaluation_summary?: string }>(
+              "get_submission",
+              [sub.id],
+              (v) => v.status === "disqualified"
+            );
+            if (terminal.status !== "disqualified") {
+              throw new Error("terminal disqualification did not settle");
+            }
+            await prisma.submission.update({
+              where: { id: sub.id },
+              data: {
+                status: "disqualified",
+                invalidImageAttempts: attempts,
+                evaluationSummary: terminal.evaluation_summary || reason,
+              },
+            });
+            logger.warn(
+              { sub: sub.id, attempts },
+              "terminal INVALID_IMAGE disqualification confirmed on-chain"
+            );
+          } catch (terminalErr) {
+            // Never invent a terminal result in PostgreSQL. Keeping the row
+            // onchain makes the next sweep retry the auditable chain write.
+            await prisma.submission.update({
+              where: { id: sub.id },
+              data: { invalidImageAttempts: attempts },
+            });
+            logger.error(
+              { sub: sub.id, attempts, err: (terminalErr as Error).message },
+              "on-chain terminal disqualification failed; will retry"
+            );
+          }
         } else {
           await prisma.submission.update({
             where: { id: sub.id },
@@ -527,7 +548,7 @@ export async function runFinalization() {
         });
       }
       finalized.push(comp.id);
-      await relayPrizesToEscrow(comp.id, winners).catch((err) =>
+      await relayPrizesToEscrow(comp.id).catch((err) =>
         logger.warn(
           { comp: comp.id, err: (err as Error).message },
           "prize relay to Base Sepolia failed; runPrizeRelaySweep will retry"
@@ -555,40 +576,60 @@ export async function runFinalization() {
  * for this competition (idempotency check before the possibly-costly
  * on-chain call).
  */
-async function relayPrizesToEscrow(
-  competitionId: string,
-  winners: Array<{
+async function relayPrizesToEscrow(competitionId: string): Promise<boolean> {
+  if (!escrow.isEscrowConfigured()) return false;
+
+  // Fetch the authoritative list immediately before financially committing
+  // it. An upheld dispute may have rebalanced winners since finalization;
+  // winnersJson is only a cache and must never select Base recipients.
+  const onchainComp = (await gl.getOnchainCompetition(competitionId)) as {
+    status?: string;
+    relay_tx_hash?: string;
+    challenge_ends_at?: string | number;
+    winners?: Array<{
     submission_id: string;
     author: string;
     rank: number;
     score: number;
     reward_usdc: string;
-  }>
-): Promise<void> {
-  if (!escrow.isEscrowConfigured()) return;
-  const hasReward = winners.some((w) => BigInt(w.reward_usdc || "0") > BigInt(0));
-  if (!hasReward) return;
-
-  const onchainComp = (await gl.getOnchainCompetition(competitionId)) as {
-    relay_tx_hash?: string;
-    challenge_ends_at?: string | number;
+    }>;
   };
+  const winners = onchainComp.winners || [];
+  const hasReward = winners.some((w) => BigInt(w.reward_usdc || "0") > BigInt(0));
+  if (!hasReward) return false;
   if (onchainComp.relay_tx_hash) {
     // Already relayed on GenLayer — just make sure our own mirror agrees
     // (e.g. after a restart between the on-chain mark and this DB write).
     await prisma.competition
       .update({ where: { id: competitionId }, data: { relayTxHash: onchainComp.relay_tx_hash } })
       .catch(() => undefined);
-    return;
+    return true;
   }
   const challengeEndsAt = BigInt(onchainComp.challenge_ends_at || 0);
   // The contract's marker remains the authority and will repeat these
   // checks. Waiting here avoids submitting a Base allocation that could not
   // yet be safely marked on GenLayer.
   if (challengeEndsAt === BigInt(0) || challengeEndsAt > BigInt(Math.floor(Date.now() / 1000))) {
-    return;
+    return false;
   }
-  if (!(await gl.canRelayPrizesOnChain(competitionId))) return;
+  if (!(await gl.canRelayPrizesOnChain(competitionId))) return false;
+
+  // Reconcile the local display cache only after the contract says the list
+  // is settlement-ready. This also demotes a winner disqualified by an
+  // upheld challenge and promotes the replacement selected on GenLayer.
+  const localSubs = await prisma.submission.findMany({ where: { competitionId } });
+  const winnerIds = new Set(winners.map((w) => w.submission_id));
+  for (const sub of localSubs) {
+    if (winnerIds.has(sub.id) && sub.status !== "winner") {
+      await prisma.submission.update({ where: { id: sub.id }, data: { status: "winner" } });
+    } else if (!winnerIds.has(sub.id) && sub.status === "winner") {
+      await prisma.submission.update({ where: { id: sub.id }, data: { status: "disqualified" } });
+    }
+  }
+  await prisma.competition.update({
+    where: { id: competitionId },
+    data: { winnersJson: JSON.stringify(winners) },
+  });
 
   // `winners[].author` is now the winner's actual connected wallet — every
   // GenLayer write is signed directly by that wallet (see
@@ -599,6 +640,7 @@ async function relayPrizesToEscrow(
   await gl.markPrizesRelayedOnChain(competitionId, txHash);
   await prisma.competition.update({ where: { id: competitionId }, data: { relayTxHash: txHash } });
   logger.info({ comp: competitionId, txHash, reconciled: relay.reconciled }, "prizes relayed to Base Sepolia escrow");
+  return true;
 }
 
 /**
@@ -619,20 +661,11 @@ export async function runPrizeRelaySweep() {
   const relayed: string[] = [];
   for (const comp of candidates) {
     try {
-      const winners = JSON.parse(comp.winnersJson || "[]") as Array<{
-        submission_id: string;
-        author: string;
-        rank: number;
-        score: number;
-        reward_usdc: string;
-      }>;
-      if (winners.length === 0) continue;
       const onchainComp = (await gl.getOnchainCompetition(comp.id)) as {
         relay_tx_hash?: string;
       };
       if (onchainComp.relay_tx_hash) continue; // already relayed
-      await relayPrizesToEscrow(comp.id, winners);
-      relayed.push(comp.id);
+      if (await relayPrizesToEscrow(comp.id)) relayed.push(comp.id);
     } catch (err) {
       logger.warn(
         { comp: comp.id, err: (err as Error).message },

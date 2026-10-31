@@ -9,6 +9,11 @@ in real USDC on Base Sepolia — not likes, not votes, only logic.**
 - **MemeOlympicsEscrow (Base Sepolia):** `0x372582652fc0aa9407B426a8779ee92dA5859Cf8`
 - **USDC (Base Sepolia, Circle official):** `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
 
+The two contract addresses above are the preceding live release. Repository
+head includes the fully tested settlement corrections documented in
+[REVIEW.md](REVIEW.md); they require a coordinated replacement of both
+contracts and configuration before they are live.
+
 Anyone can host an arena — set a theme, a deadline, and an optional real
 USDC prize pool. Anyone can submit one meme per arena. When an arena's
 deadline hits, GenLayer validators judge every submission — genuinely
@@ -179,6 +184,8 @@ sequenceDiagram
   the challenge window, and
   winners pull their own USDC directly from the escrow contract with
   their own wallet. The backend never custodies a cent.
+  Immediately before allocation, the worker re-reads the winner list from
+  GenLayer, so an upheld challenge cannot leave a stale cached recipient.
 - **USDC balance dashboard** — Settings and Rewards both show your real
   wallet USDC balance on Base Sepolia, what you've won but isn't relayed
   yet, and what's actually claimable right now — tracked per-competition
@@ -332,7 +339,9 @@ funding/claim flow. Highlights:
 - **Judging self-heals from a rejected image** — if the AI judge repeatedly
   rejects a submission's image outright (`INVALID_IMAGE`, typically a
   plain, unedited photo of a real person with no meme-format framing), the
-  judging sweep now auto-disqualifies it after 3 consecutive attempts
+  judging sweep now submits an admin-only, reason-bearing terminal
+  disqualification on GenLayer after 3 consecutive attempts and confirms it
+  before changing PostgreSQL
   (~3 minutes, one sweep per minute — counted per submission, not by
   elapsed time) instead of leaving it stuck and silently blocking that
   arena's finalization
@@ -342,7 +351,7 @@ funding/claim flow. Highlights:
 
 | When | What |
 |---|---|
-| Mon 00:05 | Weekly rollover — opens the new official `week-YYYY-WW` arena on-chain (Redis-locked) |
+| Manual only | Official rollover endpoint (automatic weekly rollover is disabled) |
 | Exact deadline | Per-arena timer closes that arena the instant its deadline hits |
 | Every minute | Fallback close sweep + judge/finalize sweep (both Redis-locked) |
 | Every 2 min | Prize relay sweep — after the challenge period, pushes any finalized-but-unrelayed competition's winners to Base Sepolia (Redis-locked) |

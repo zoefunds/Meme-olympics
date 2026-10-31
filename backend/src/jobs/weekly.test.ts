@@ -4,6 +4,10 @@ import { createFakeGenlayer } from "../test/fakeGenlayer";
 
 let fakePrisma: FakePrisma;
 let fakeGl: ReturnType<typeof createFakeGenlayer>;
+let fakeEscrow: {
+  isEscrowConfigured: ReturnType<typeof vi.fn>;
+  relayWinnersToEscrow: ReturnType<typeof vi.fn>;
+};
 
 vi.mock("../lib/prisma", () => ({
   get prisma() {
@@ -29,6 +33,9 @@ vi.mock("../services/genlayer", () => ({
   get evaluateSubmissionOnChain() {
     return fakeGl.evaluateSubmissionOnChain;
   },
+  get disqualifyUnjudgeableSubmissionOnChain() {
+    return fakeGl.disqualifyUnjudgeableSubmissionOnChain;
+  },
   get resolveDisputeOnChain() {
     return fakeGl.resolveDisputeOnChain;
   },
@@ -41,11 +48,22 @@ vi.mock("../services/genlayer", () => ({
   get canRelayPrizesOnChain() {
     return fakeGl.canRelayPrizesOnChain;
   },
+  get markPrizesRelayedOnChain() {
+    return fakeGl.markPrizesRelayedOnChain;
+  },
   get readSettled() {
     return fakeGl.readSettled;
   },
   get readContract() {
     return fakeGl.readContract;
+  },
+}));
+vi.mock("../services/baseSepolia", () => ({
+  get isEscrowConfigured() {
+    return fakeEscrow.isEscrowConfigured;
+  },
+  get relayWinnersToEscrow() {
+    return fakeEscrow.relayWinnersToEscrow;
   },
 }));
 vi.mock("../lib/logger", () => ({
@@ -75,6 +93,10 @@ function makeCompetition(overrides: Partial<Record<string, any>> = {}) {
 beforeEach(() => {
   fakePrisma = createFakePrisma();
   fakeGl = createFakeGenlayer();
+  fakeEscrow = {
+    isEscrowConfigured: vi.fn(() => true),
+    relayWinnersToEscrow: vi.fn(async () => ({ txHash: "0xbase", reconciled: false })),
+  };
 });
 
 afterEach(() => {
@@ -240,6 +262,37 @@ describe("runJudgingSweep", () => {
     const sub = await fakePrisma.submission.findUnique({ where: { id: "s1" } });
     expect(sub!.status).toBe("failed");
   });
+
+  it("records repeated INVALID_IMAGE terminally on-chain and then permits finalization", async () => {
+    await fakePrisma.competition.create({
+      data: makeCompetition({ status: "judging", endsAt: new Date(Date.now() - 1000) }),
+    });
+    await fakePrisma.user.create({ data: { id: "u1", email: "a@a.com", encryptedPrivateKey: "k" } });
+    await fakePrisma.submission.create({
+      data: {
+        id: "s1", competitionId: "week-2026-30", userId: "u1", status: "onchain",
+        title: "t", invalidImageAttempts: 2,
+      },
+    });
+    fakeGl.__setImpl("getOnchainSubmission", () => ({ status: "pending" }));
+    fakeGl.evaluateSubmissionOnChain.mockRejectedValue(new Error("INVALID_IMAGE"));
+    fakeGl.__setImpl("readContract", (fn: string) =>
+      fn === "get_submission"
+        ? { status: "disqualified", evaluation_summary: "Repeated INVALID_IMAGE" }
+        : { status: "finalized", winners: [] }
+    );
+
+    await weekly.runJudgingSweep();
+    expect(fakeGl.disqualifyUnjudgeableSubmissionOnChain).toHaveBeenCalledWith(
+      "s1", expect.stringContaining("INVALID_IMAGE")
+    );
+    expect((await fakePrisma.submission.findUnique({ where: { id: "s1" } }))!.status)
+      .toBe("disqualified");
+
+    fakeGl.__setImpl("getOnchainCompetition", () => ({ status: "judging" }));
+    const result = await weekly.runFinalization();
+    expect(result.finalized).toEqual(["week-2026-30"]);
+  });
 });
 
 describe("runFinalization (payout)", () => {
@@ -309,5 +362,44 @@ describe("runFinalization (payout)", () => {
     expect(comp!.status).toBe("judging");
     const sub = await fakePrisma.submission.findUnique({ where: { id: "s1" } });
     expect(sub!.status).toBe("evaluated");
+  });
+});
+
+describe("runPrizeRelaySweep", () => {
+  it("settles the authoritative post-dispute winner instead of the cached finalist", async () => {
+    const challengeEnded = Math.floor(Date.now() / 1000) - 60;
+    await fakePrisma.competition.create({
+      data: makeCompetition({
+        status: "finalized", onchainFinalized: true,
+        winnersJson: JSON.stringify([{ submission_id: "old", author: "0xold", rank: 1, score: 99, reward_usdc: "1000000" }]),
+      }),
+    });
+    await fakePrisma.submission.create({
+      data: { id: "old", competitionId: "week-2026-30", userId: "u1", status: "winner" },
+    });
+    await fakePrisma.submission.create({
+      data: { id: "new", competitionId: "week-2026-30", userId: "u2", status: "evaluated" },
+    });
+    const authoritative = [
+      { submission_id: "new", author: "0xnew", rank: 1, score: 94, reward_usdc: "1000000" },
+    ];
+    fakeGl.__setImpl("getOnchainCompetition", () => ({
+      status: "finalized", winners: authoritative, relay_tx_hash: "", challenge_ends_at: String(challengeEnded),
+    }));
+    fakeGl.canRelayPrizesOnChain.mockResolvedValue(true);
+
+    const result = await weekly.runPrizeRelaySweep();
+
+    expect(result.relayed).toEqual(["week-2026-30"]);
+    expect(fakeEscrow.relayWinnersToEscrow).toHaveBeenCalledWith(
+      "week-2026-30", authoritative, BigInt(challengeEnded)
+    );
+    expect(fakeGl.markPrizesRelayedOnChain).toHaveBeenCalledWith("week-2026-30", "0xbase");
+    expect((await fakePrisma.submission.findUnique({ where: { id: "old" } }))!.status)
+      .toBe("disqualified");
+    expect((await fakePrisma.submission.findUnique({ where: { id: "new" } }))!.status)
+      .toBe("winner");
+    const comp = await fakePrisma.competition.findUnique({ where: { id: "week-2026-30" } });
+    expect(JSON.parse(comp!.winnersJson)).toEqual(authoritative);
   });
 });

@@ -49,6 +49,8 @@ MEME_OLYMPICS_ESCROW_ADDRESS=0x372582652fc0aa9407B426a8779ee92dA5859Cf8
    `BASE_SEPOLIA_RELAYER_PRIVATE_KEY`, then calls `mark_prizes_relayed` back
    on GenLayer so it's never relayed twice. It only does this once the
    GenLayer contract says the challenge period is over.
+   The timestamp may therefore already be in the past when `setWinners` is
+   mined; it must be nonzero and remains the authoritative claim boundary.
 5. Winners call `claim(competitionId)` (or `claimMany`) themselves, from
    their own wallet — the backend never holds or moves their USDC.
 
@@ -60,6 +62,9 @@ MEME_OLYMPICS_ESCROW_ADDRESS=0x372582652fc0aa9407B426a8779ee92dA5859Cf8
   `WinnersSet` receipt instead of retrying the irreversible write.
 - Claims are time-locked by `claimableAfter`; the escrow rejects both
   `claim` and `claimMany` until the GenLayer challenge deadline.
+- Allocation after an already-ended challenge is accepted and immediately
+  claimable; the escrow does not replace the GenLayer timestamp with a new
+  caller-selected delay.
 - Claims use a pull pattern with checks-effects-interactions and a
   reentrancy guard.
 - The owner can rotate the relayer (`setRelayer`) and reclaim only

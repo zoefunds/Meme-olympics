@@ -112,11 +112,11 @@ contract MemeOlympicsEscrow {
 
         Pool storage pool = pools[competitionId];
         require(!pool.winnersSet, "MemeOlympicsEscrow: winners already set");
-        // The relayer must not make a just-finalized list claimable in the
-        // same Base block. The GenLayer contract supplies the end of its
-        // challenge period; this local guard also makes accidental zero-time
-        // settlement impossible.
-        require(claimableAfter >= block.timestamp, "MemeOlympicsEscrow: claim time is in the past");
+        // This is the authoritative GenLayer challenge deadline. The relayer
+        // intentionally waits until that deadline has passed before calling
+        // setWinners, so a past value is both valid and immediately claimable.
+        // Zero remains forbidden to prevent an accidental unguarded payout.
+        require(claimableAfter != 0, "MemeOlympicsEscrow: invalid claim time");
 
         uint256 total = 0;
         for (uint256 i = 0; i < amounts.length; i++) {

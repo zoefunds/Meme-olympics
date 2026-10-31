@@ -322,6 +322,21 @@ export async function evaluateSubmissionOnChain(
   );
 }
 
+/** Admin-only recovery after bounded INVALID_IMAGE failures. The contract
+ * records the terminal decision and reason before the database mirrors it. */
+export async function disqualifyUnjudgeableSubmissionOnChain(
+  submissionId: string,
+  reason: string
+): Promise<string> {
+  return writeAs(
+    await getOperatorClient(),
+    "disqualify_unjudgeable_submission",
+    [submissionId, reason],
+    BigInt(0),
+    true
+  );
+}
+
 export async function resolveDisputeOnChain(
   disputeId: string,
   resolvedAt: string

@@ -1323,6 +1323,43 @@ Return ONLY a JSON object exactly like:
     # Finalization & rewards (fully deterministic)
     # ==================================================================
     @gl.public.write
+    def disqualify_unjudgeable_submission(self, submission_id: str, reason: str) -> None:
+        """Admin-only terminal recovery for an entry the AI runtime cannot
+        decode after bounded retries. This is deliberately narrower than a
+        general moderation endpoint: only a pending entry in a judging arena
+        can transition, and the reason is persisted in the audit log/state."""
+        self._require_admin()
+        sub = self._get_submission(submission_id)
+        comp = self._get_competition(sub.competition_id)
+        if comp.status != COMP_STATUS_JUDGING:
+            raise gl.vm.UserError(
+                f"{ERROR_EXPECTED} Competition is '{comp.status}', expected 'judging'"
+            )
+        if sub.status != SUB_STATUS_PENDING:
+            raise gl.vm.UserError(
+                f"{ERROR_EXPECTED} Submission is '{sub.status}', expected 'pending'"
+            )
+        clean_reason = str(reason).strip()[:300]
+        if not clean_reason:
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} Disqualification reason is required")
+
+        sub.status = SUB_STATUS_DISQUALIFIED
+        sub.criteria_json = "{}"
+        sub.total_score = u256(0)
+        sub.image_accessible = False
+        sub.evaluation_summary = clean_reason
+        sub.evaluated_at = sub.submitted_at
+        sub.eligible = False
+        sub.eligibility_reason = clean_reason
+        stats = self._touch_user(sub.author)
+        stats.disqualifications = u256(int(stats.disqualifications) + 1)
+        self.total_evaluations = u256(int(self.total_evaluations) + 1)
+        self._log(
+            "submission_terminally_disqualified",
+            {"id": submission_id, "reason": clean_reason},
+        )
+
+    @gl.public.write
     def finalize_competition(self, competition_id: str, finalized_at: str) -> None:
         """Deterministically rank evaluated submissions, select winners and
         compute each one's USDC reward share. Purely a judging-side record —
