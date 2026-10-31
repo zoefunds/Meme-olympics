@@ -86,6 +86,9 @@ All suites pass in the submitted state.
 - GenLayer: `0xeE76760172cbCD1ed33B41863b44AE8F74D2EE25`
 - Base escrow: `0x951773259a9c90bE6DCfB5C9E4aedA9fBe89F10c`
 - Base Sepolia USDC: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
+- Base owner/relayer: `0x3ac70057A8Dd00Fcd590a6Bb59ce94D1222659dC`
+- Production source commit: `bfd56a5`
+- Vercel deployment: `dpl_5wN9RomA2Z8SZhpUuxccS1E49H4i`
 
 The production backend and PostgreSQL health checks pass. The production chain
 verification confirms GenLayer owner/admin authority and Base escrow

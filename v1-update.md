@@ -39,7 +39,7 @@ attach` so the deploy script cannot overwrite it with a local or retired URL.
 - provisional winner rebalancing after upheld disputes;
 - Base claim time lock using the authoritative challenge timestamp;
 - partial relay recovery when Base succeeds before the GenLayer marker;
-- Base deposit receipt and escrow-pool verification before showing “funded.”
+- Base deposit receipt and escrow-pool verification before showing “funded”;
 - post-challenge Base allocation accepts the already-passed authoritative
   deadline and is immediately claimable;
 - settlement re-reads authoritative post-dispute winners instead of cached
@@ -68,3 +68,4 @@ attach` so the deploy script cannot overwrite it with a local or retired URL.
 - Fly PostgreSQL checks: 3/3 passing
 - Vercel production deployment: ready and aliased
 - Live chain ownership/configuration audit: passing
+- Production source commit `bfd56a5`: pushed to `main`

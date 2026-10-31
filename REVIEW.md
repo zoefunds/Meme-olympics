@@ -89,8 +89,13 @@ claimable state, and winner USDC balance increase. Instructions are in
 - Frontend production build: passing
 - API health: https://meme-olympics-api-v2-gideon.fly.dev/health
 - Live app: https://meme-olympics.vercel.app
+- Production source commit: `bfd56a5`
+- Vercel deployment: `dpl_5wN9RomA2Z8SZhpUuxccS1E49H4i`
 - GenLayer contract: `0xeE76760172cbCD1ed33B41863b44AE8F74D2EE25`
+- GenLayer deployment transaction:
+  `0x21b6f80c042269a9ec3588ecf64170b4b08a6b89ed1a2cc58396635f802994d9`
 - Base escrow: `0x951773259a9c90bE6DCfB5C9E4aedA9fBe89F10c`
+- Base owner/relayer: `0x3ac70057A8Dd00Fcd590a6Bb59ce94D1222659dC`
 
 The live verification script confirms that the configured GenLayer operator is
 the contract owner/admin and that the configured Base escrow has deployed

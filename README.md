@@ -12,6 +12,9 @@ in real USDC on Base Sepolia — not likes, not votes, only logic.**
 These are the current production contracts containing the settlement
 corrections documented in [REVIEW.md](REVIEW.md).
 
+Current production release: Git commit `bfd56a5`, Vercel deployment
+`dpl_5wN9RomA2Z8SZhpUuxccS1E49H4i`, deployed and verified on 2026-10-31.
+
 Anyone can host an arena — set a theme, a deadline, and an optional real
 USDC prize pool. Anyone can submit one meme per arena. When an arena's
 deadline hits, GenLayer validators judge every submission — genuinely

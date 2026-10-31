@@ -92,4 +92,6 @@ secret manager into the process environment. Do not put literal private keys
 in the command or shell history.
 
 The script prints the approval, deposit, allocation, and claim transaction
-hashes and checks the pool and winner claimable balance after each stage.
+hashes. It verifies the allocated pool/deadline, then proves completion by
+checking the winner's exact USDC balance increase and zero residual claimable
+balance after the claim.

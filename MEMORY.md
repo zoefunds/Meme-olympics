@@ -20,6 +20,10 @@ and retired architectures have deliberately been removed.
 - Fly PostgreSQL app: `meme-olympics-db-v2-gideon`
 - Base relayer/escrow owner:
   `0x3ac70057A8Dd00Fcd590a6Bb59ce94D1222659dC`
+- Production source commit: `bfd56a5`
+- Vercel production deployment: `dpl_5wN9RomA2Z8SZhpUuxccS1E49H4i`
+- GenLayer deployment transaction:
+  `0x21b6f80c042269a9ec3588ecf64170b4b08a6b89ed1a2cc58396635f802994d9`
 
 The backend has one always-on Fly machine (`min_machines_running=1`,
 `auto_stop_machines=false`). Cron work is Redis-locked and remains safe if the
