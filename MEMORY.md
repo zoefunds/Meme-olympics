@@ -103,6 +103,9 @@ npm run build
 Current verified counts: backend **32/32**, GenLayer lifecycle **4/4**, Base
 escrow **3/3**.
 
+The backend total includes claim-aware reconciliation coverage for a winner
+who claims before GenLayer marker recovery and for inconsistent claim history.
+
 ## Operational rules
 
 - Never reuse or fund the retired Base relayer/escrow.

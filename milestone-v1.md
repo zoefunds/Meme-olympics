@@ -78,6 +78,8 @@ pool before displaying the arena as funded.
 ## Tests and reproducibility
 
 - `backend`: 32 Vitest tests
+- `backend/src/services/baseSepolia.test.ts`: claimed-before-marker recovery
+  and inconsistent-claim-history rejection
 - `contracts/tests/test_lifecycle_guards.py`: 4 adversarial GenLayer tests
 - `contracts/base/test/MemeOlympicsEscrow.t.sol`: 3 Foundry escrow tests
 - `contracts/base/e2e-example.js`: funded allocation and successful claim

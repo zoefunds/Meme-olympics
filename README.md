@@ -191,6 +191,8 @@ sequenceDiagram
   If allocation succeeded but the GenLayer marker failed, recovery verifies
   the original `setWinners` calldata and accounts for `Claimed` events, so a
   winner claiming before the retry cannot break reconciliation.
+  Dedicated regression coverage lives in
+  [backend/src/services/baseSepolia.test.ts](backend/src/services/baseSepolia.test.ts).
 - **USDC balance dashboard** — Settings and Rewards both show your real
   wallet USDC balance on Base Sepolia, what you've won but isn't relayed
   yet, and what's actually claimable right now — tracked per-competition

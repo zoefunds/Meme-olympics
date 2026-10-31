@@ -76,6 +76,10 @@ relay marker fails. A retry now:
 
 It never blindly resends the one-time Base allocation.
 
+[`backend/src/services/baseSepolia.test.ts`](backend/src/services/baseSepolia.test.ts)
+covers successful recovery after a complete winner claim and rejection when
+claimable state plus claim events cannot account for the original award.
+
 ## 4. Funding receipt verification
 
 The frontend waits for successful Base Sepolia approval and deposit receipts,

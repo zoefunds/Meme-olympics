@@ -66,6 +66,7 @@ attach` so the deploy script cannot overwrite it with a local or retired URL.
 ## Verified results
 
 - Backend: 32/32 tests
+- Claim-aware Base reconciliation regression tests: passing
 - GenLayer lifecycle: 4/4 tests
 - Base escrow: 3/3 tests
 - Frontend: production build successful

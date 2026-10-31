@@ -58,8 +58,10 @@ MEME_OLYMPICS_ESCROW_ADDRESS=0x951773259a9c90bE6DCfB5C9E4aedA9fBe89F10c
 
 - `setWinners` can only be called once per `competitionId` (idempotency
   gate) and only by the configured `relayer` address. The backend reconciles
-  an already-set allocation by reading the existing winner balances and its
-  `WinnersSet` receipt instead of retrying the irreversible write.
+  an already-set allocation by locating its `WinnersSet` transaction, decoding
+  the original calldata, and proving each original award equals the current
+  claimable balance plus matching `Claimed` events. It never retries the
+  irreversible write, even if a winner claimed before marker recovery.
 - Claims are time-locked by `claimableAfter`; the escrow rejects both
   `claim` and `claimMany` until the GenLayer challenge deadline.
 - Allocation after an already-ended challenge is accepted and immediately
@@ -95,3 +97,7 @@ The script prints the approval, deposit, allocation, and claim transaction
 hashes. It verifies the allocated pool/deadline, then proves completion by
 checking the winner's exact USDC balance increase and zero residual claimable
 balance after the claim.
+
+Automated recovery coverage is in
+`backend/src/services/baseSepolia.test.ts`; the tests include a fully claimed
+award before marker recovery and rejection of inconsistent claim history.
