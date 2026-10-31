@@ -103,6 +103,73 @@ async function findWinnersSetTransaction(
   return log.transactionHash;
 }
 
+/** Prove an already-set allocation even if one or more winners claimed before
+ * the GenLayer marker retry. The original transaction calldata is immutable
+ * evidence of recipients/amounts; Claimed events account for balances that
+ * have legitimately moved out of `claimable` since allocation. */
+export async function reconcileExistingAllocation(
+  contract: ethers.Contract,
+  key: string,
+  addresses: string[],
+  amounts: bigint[],
+  claimableAfter: bigint,
+  allocated: bigint,
+  existingClaimableAfter: bigint
+): Promise<string> {
+  const expectedTotal = amounts.reduce((sum, amount) => sum + amount, BigInt(0));
+  if (allocated !== expectedTotal || existingClaimableAfter !== claimableAfter) {
+    throw new Error("Existing Base allocation totals/deadline do not match finalized settlement");
+  }
+
+  const txHash = await findWinnersSetTransaction(contract, key);
+  const txProvider = (contract.runner as ethers.ContractRunner | null)?.provider;
+  if (!txProvider) throw new Error("Escrow provider unavailable for allocation reconciliation");
+  const tx = await txProvider.getTransaction(txHash);
+  if (!tx) throw new Error("Original Base allocation transaction is unavailable");
+  const parsed = contract.interface.parseTransaction({ data: tx.data, value: tx.value });
+  if (!parsed || parsed.name !== "setWinners") {
+    throw new Error("Original Base allocation transaction is not setWinners");
+  }
+  const originalKey = String(parsed.args[0]).toLowerCase();
+  const originalAddresses = Array.from(parsed.args[1] as string[]).map((v) => v.toLowerCase());
+  const originalAmounts = Array.from(parsed.args[2] as bigint[]).map((v) => BigInt(v));
+  const originalDeadline = BigInt(parsed.args[3]);
+  if (
+    originalKey !== key.toLowerCase() ||
+    originalDeadline !== claimableAfter ||
+    originalAddresses.length !== addresses.length ||
+    originalAmounts.length !== amounts.length ||
+    originalAddresses.some((address, i) => address !== addresses[i].toLowerCase()) ||
+    originalAmounts.some((amount, i) => amount !== amounts[i])
+  ) {
+    throw new Error("Original Base allocation calldata does not match finalized settlement");
+  }
+
+  const expectedByAddress = new Map<string, bigint>();
+  for (let i = 0; i < addresses.length; i++) {
+    const address = addresses[i].toLowerCase();
+    expectedByAddress.set(address, (expectedByAddress.get(address) || BigInt(0)) + amounts[i]);
+  }
+  for (const [address, expected] of expectedByAddress) {
+    const [current, claimLogs] = await Promise.all([
+      contract.getClaimable(key, address),
+      contract.queryFilter(contract.filters.Claimed(key, address)),
+    ]);
+    let claimed = BigInt(0);
+    for (const log of claimLogs) {
+      const args = "args" in log && log.args
+        ? log.args
+        : contract.interface.parseLog({ topics: log.topics as string[], data: log.data })?.args;
+      if (!args) throw new Error("Unable to decode Base claim evidence");
+      claimed += BigInt(args.amount ?? args[2]);
+    }
+    if (BigInt(current) + claimed !== expected) {
+      throw new Error("Existing Base winner balance plus claims does not match finalized settlement");
+    }
+  }
+  return txHash;
+}
+
 export async function relayWinnersToEscrow(
   competitionId: string,
   winners: OnchainWinner[],
@@ -123,21 +190,22 @@ export async function relayWinnersToEscrow(
   // never submit setWinners a second time.
   const [deposited, allocated, winnersSet, existingClaimableAfter] = await contract.getPool(key);
   if (winnersSet) {
-    const expected = amounts.reduce((sum, amount) => sum + amount, BigInt(0));
-    if ((allocated as bigint) !== expected || (existingClaimableAfter as bigint) !== claimableAfter) {
-      throw new Error(`Existing Base allocation for ${competitionId} does not match finalized settlement`);
-    }
-    for (let i = 0; i < addresses.length; i++) {
-      const actual = await contract.getClaimable(key, addresses[i]);
-      if ((actual as bigint) !== amounts[i]) {
-        throw new Error(`Existing Base winner allocation for ${competitionId} does not match finalized settlement`);
-      }
-    }
     // Keep the read so provider/ABI errors are surfaced before we claim
     // reconciliation succeeded; deposited is intentionally not authoritative
     // once a pool has had withdrawals of unallocated funds.
     void deposited;
-    return { txHash: await findWinnersSetTransaction(contract, key), reconciled: true };
+    return {
+      txHash: await reconcileExistingAllocation(
+        contract,
+        key,
+        addresses,
+        amounts,
+        claimableAfter,
+        allocated as bigint,
+        existingClaimableAfter as bigint
+      ),
+      reconciled: true,
+    };
   }
 
   const tx = await contract.setWinners(key, addresses, amounts, claimableAfter);

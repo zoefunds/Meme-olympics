@@ -254,6 +254,13 @@ class MemeOlympics(gl.Contract):
     total_disputes: u256
     audit_log: DynArray[str]                # JSON event strings, capped reads
 
+    # Evidence for the exceptional INVALID_IMAGE terminal path. Append-only
+    # storage: each entry is the accepted-but-execution-failed evaluation tx
+    # hash observed by the operator. Three distinct commitments are required
+    # before an admin can terminally disqualify a pending entry.
+    unjudgeable_attempt_count: TreeMap[str, u256]
+    unjudgeable_attempt_hashes_json: TreeMap[str, str]
+
     # ==================================================================
     # Constructor
     # ==================================================================
@@ -1323,6 +1330,47 @@ Return ONLY a JSON object exactly like:
     # Finalization & rewards (fully deterministic)
     # ==================================================================
     @gl.public.write
+    def record_unjudgeable_attempt(self, submission_id: str, evidence_tx_hash: str) -> None:
+        """Commit one distinct failed evaluation transaction as evidence.
+        This does not change submission status and is independently auditable."""
+        self._require_admin()
+        sub = self._get_submission(submission_id)
+        comp = self._get_competition(sub.competition_id)
+        if comp.status != COMP_STATUS_JUDGING:
+            raise gl.vm.UserError(
+                f"{ERROR_EXPECTED} Competition is '{comp.status}', expected 'judging'"
+            )
+        if sub.status != SUB_STATUS_PENDING:
+            raise gl.vm.UserError(
+                f"{ERROR_EXPECTED} Submission is '{sub.status}', expected 'pending'"
+            )
+        evidence = str(evidence_tx_hash).strip().lower()
+        if len(evidence) != 66 or not evidence.startswith("0x"):
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} Invalid evaluation transaction hash")
+        try:
+            int(evidence[2:], 16)
+        except ValueError:
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} Invalid evaluation transaction hash")
+
+        hashes_json = (
+            self.unjudgeable_attempt_hashes_json[submission_id]
+            if submission_id in self.unjudgeable_attempt_hashes_json
+            else "[]"
+        )
+        hashes = json.loads(hashes_json or "[]")
+        if evidence in hashes:
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} Evidence transaction already recorded")
+        if len(hashes) >= 3:
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} Required evidence already complete")
+        hashes.append(evidence)
+        self.unjudgeable_attempt_hashes_json[submission_id] = json.dumps(hashes)
+        self.unjudgeable_attempt_count[submission_id] = u256(len(hashes))
+        self._log(
+            "unjudgeable_attempt_recorded",
+            {"id": submission_id, "attempt": len(hashes), "tx": evidence},
+        )
+
+    @gl.public.write
     def disqualify_unjudgeable_submission(self, submission_id: str, reason: str) -> None:
         """Admin-only terminal recovery for an entry the AI runtime cannot
         decode after bounded retries. This is deliberately narrower than a
@@ -1338,6 +1386,15 @@ Return ONLY a JSON object exactly like:
         if sub.status != SUB_STATUS_PENDING:
             raise gl.vm.UserError(
                 f"{ERROR_EXPECTED} Submission is '{sub.status}', expected 'pending'"
+            )
+        evidence_count = (
+            int(self.unjudgeable_attempt_count[submission_id])
+            if submission_id in self.unjudgeable_attempt_count
+            else 0
+        )
+        if evidence_count < 3:
+            raise gl.vm.UserError(
+                f"{ERROR_EXPECTED} Three failed evaluation commitments are required"
             )
         clean_reason = str(reason).strip()[:300]
         if not clean_reason:
@@ -1356,7 +1413,7 @@ Return ONLY a JSON object exactly like:
         self.total_evaluations = u256(int(self.total_evaluations) + 1)
         self._log(
             "submission_terminally_disqualified",
-            {"id": submission_id, "reason": clean_reason},
+            {"id": submission_id, "reason": clean_reason, "evidence_count": evidence_count},
         )
 
     @gl.public.write
@@ -1903,6 +1960,18 @@ Return ONLY JSON: {{"uphold": true/false, "confidence": 0-100, "summary": "1-2 s
             "evaluation_summary": sub.evaluation_summary,
             "eligible": sub.eligible,
             "eligibility_reason": sub.eligibility_reason,
+            "unjudgeable_attempt_count": (
+                int(self.unjudgeable_attempt_count[submission_id])
+                if submission_id in self.unjudgeable_attempt_count
+                else 0
+            ),
+            "unjudgeable_attempt_tx_hashes": json.loads(
+                (
+                    self.unjudgeable_attempt_hashes_json[submission_id]
+                    if submission_id in self.unjudgeable_attempt_hashes_json
+                    else "[]"
+                ) or "[]"
+            ),
         }
 
     @gl.public.view

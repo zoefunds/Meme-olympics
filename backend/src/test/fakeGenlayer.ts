@@ -28,6 +28,7 @@ export function createFakeGenlayer() {
     finalizeCompetitionOnChain: vi.fn(record("finalizeCompetitionOnChain")),
     evaluateSubmissionOnChain: vi.fn(record("evaluateSubmissionOnChain")),
     disqualifyUnjudgeableSubmissionOnChain: vi.fn(record("disqualifyUnjudgeableSubmissionOnChain")),
+    recordUnjudgeableAttemptOnChain: vi.fn(record("recordUnjudgeableAttemptOnChain")),
     resolveDisputeOnChain: vi.fn(record("resolveDisputeOnChain")),
     getOnchainSubmission: vi.fn(record("getOnchainSubmission")),
     getOnchainCompetition: vi.fn(record("getOnchainCompetition")),

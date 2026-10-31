@@ -60,6 +60,17 @@ def test_terminal_invalid_image_recovery_allows_finalization(arena):
     vm, contract = arena
     vm.warp("2030-01-02T00:00:01+00:00")
     contract.close_submissions("arena-guard")
+
+    first = "0x" + "11" * 32
+    second = "0x" + "22" * 32
+    third = "0x" + "33" * 32
+    contract.record_unjudgeable_attempt("entry-guard", first)
+    with vm.expect_revert("Three failed evaluation commitments are required"):
+        contract.disqualify_unjudgeable_submission("entry-guard", "too early")
+    with vm.expect_revert("Evidence transaction already recorded"):
+        contract.record_unjudgeable_attempt("entry-guard", first)
+    contract.record_unjudgeable_attempt("entry-guard", second)
+    contract.record_unjudgeable_attempt("entry-guard", third)
     contract.disqualify_unjudgeable_submission(
         "entry-guard", "Repeated INVALID_IMAGE after three validator attempts"
     )
@@ -67,6 +78,8 @@ def test_terminal_invalid_image_recovery_allows_finalization(arena):
     submission = contract.get_submission("entry-guard")
     assert submission["status"] == "disqualified"
     assert "INVALID_IMAGE" in submission["evaluation_summary"]
+    assert submission["unjudgeable_attempt_count"] == 3
+    assert submission["unjudgeable_attempt_tx_hashes"] == [first, second, third]
 
     contract.finalize_competition("arena-guard", "ignored")
     assert contract.get_competition("arena-guard")["status"] == "finalized"

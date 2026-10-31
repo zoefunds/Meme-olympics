@@ -36,6 +36,9 @@ vi.mock("../services/genlayer", () => ({
   get disqualifyUnjudgeableSubmissionOnChain() {
     return fakeGl.disqualifyUnjudgeableSubmissionOnChain;
   },
+  get recordUnjudgeableAttemptOnChain() {
+    return fakeGl.recordUnjudgeableAttemptOnChain;
+  },
   get resolveDisputeOnChain() {
     return fakeGl.resolveDisputeOnChain;
   },
@@ -264,6 +267,7 @@ describe("runJudgingSweep", () => {
   });
 
   it("records repeated INVALID_IMAGE terminally on-chain and then permits finalization", async () => {
+    const failedEvaluationTx = `0x${"ab".repeat(32)}`;
     await fakePrisma.competition.create({
       data: makeCompetition({ status: "judging", endsAt: new Date(Date.now() - 1000) }),
     });
@@ -275,14 +279,26 @@ describe("runJudgingSweep", () => {
       },
     });
     fakeGl.__setImpl("getOnchainSubmission", () => ({ status: "pending" }));
-    fakeGl.evaluateSubmissionOnChain.mockRejectedValue(new Error("INVALID_IMAGE"));
-    fakeGl.__setImpl("readContract", (fn: string) =>
-      fn === "get_submission"
-        ? { status: "disqualified", evaluation_summary: "Repeated INVALID_IMAGE" }
-        : { status: "finalized", winners: [] }
+    fakeGl.evaluateSubmissionOnChain.mockRejectedValue(
+      new Error(`Transaction executed with ERROR: [LLM_ERROR] INVALID_IMAGE (${failedEvaluationTx})`)
     );
+    let submissionReads = 0;
+    fakeGl.__setImpl("readContract", (fn: string) => {
+      if (fn !== "get_submission") return { status: "finalized", winners: [] };
+      submissionReads++;
+      return submissionReads === 1
+        ? {
+            status: "pending",
+            unjudgeable_attempt_count: 3,
+            unjudgeable_attempt_tx_hashes: [failedEvaluationTx],
+          }
+        : { status: "disqualified", evaluation_summary: "Repeated INVALID_IMAGE" };
+    });
 
     await weekly.runJudgingSweep();
+    expect(fakeGl.recordUnjudgeableAttemptOnChain).toHaveBeenCalledWith(
+      "s1", failedEvaluationTx
+    );
     expect(fakeGl.disqualifyUnjudgeableSubmissionOnChain).toHaveBeenCalledWith(
       "s1", expect.stringContaining("INVALID_IMAGE")
     );
@@ -292,6 +308,27 @@ describe("runJudgingSweep", () => {
     fakeGl.__setImpl("getOnchainCompetition", () => ({ status: "judging" }));
     const result = await weekly.runFinalization();
     expect(result.finalized).toEqual(["week-2026-30"]);
+  });
+
+  it("refuses terminal recovery when INVALID_IMAGE has no failed transaction hash", async () => {
+    await fakePrisma.competition.create({
+      data: makeCompetition({ status: "judging", endsAt: new Date(Date.now() - 1000) }),
+    });
+    await fakePrisma.submission.create({
+      data: {
+        id: "s-no-proof", competitionId: "week-2026-30", userId: "u1",
+        status: "onchain", title: "t", invalidImageAttempts: 2,
+      },
+    });
+    fakeGl.__setImpl("getOnchainSubmission", () => ({ status: "pending" }));
+    fakeGl.evaluateSubmissionOnChain.mockRejectedValue(new Error("INVALID_IMAGE"));
+
+    await weekly.runJudgingSweep();
+
+    expect(fakeGl.recordUnjudgeableAttemptOnChain).not.toHaveBeenCalled();
+    expect(fakeGl.disqualifyUnjudgeableSubmissionOnChain).not.toHaveBeenCalled();
+    expect((await fakePrisma.submission.findUnique({ where: { id: "s-no-proof" } }))!.status)
+      .toBe("onchain");
   });
 });
 

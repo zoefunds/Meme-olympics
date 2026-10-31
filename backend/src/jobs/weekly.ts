@@ -407,53 +407,78 @@ export async function runJudgingSweep() {
       // time, since sweeps already run every minute — a time window just
       // adds unnecessary wait on top of that.
       if (/INVALID_IMAGE/.test(msg)) {
-        const attempts = sub.invalidImageAttempts + 1;
-        if (attempts >= MAX_INVALID_IMAGE_ATTEMPTS) {
-          const reason =
-            `Auto-disqualified after ${attempts} consecutive INVALID_IMAGE responses: ` +
-            `the validator runtime could not decode this entry as a judgeable meme.`;
-          try {
-            await gl.disqualifyUnjudgeableSubmissionOnChain(sub.id, reason);
-            const terminal = await gl.readSettled<{ status: string; evaluation_summary?: string }>(
-              "get_submission",
-              [sub.id],
-              (v) => v.status === "disqualified"
-            );
-            if (terminal.status !== "disqualified") {
-              throw new Error("terminal disqualification did not settle");
-            }
-            await prisma.submission.update({
-              where: { id: sub.id },
-              data: {
-                status: "disqualified",
-                invalidImageAttempts: attempts,
-                evaluationSummary: terminal.evaluation_summary || reason,
-              },
-            });
-            logger.warn(
-              { sub: sub.id, attempts },
-              "terminal INVALID_IMAGE disqualification confirmed on-chain"
-            );
-          } catch (terminalErr) {
-            // Never invent a terminal result in PostgreSQL. Keeping the row
-            // onchain makes the next sweep retry the auditable chain write.
+        const evidenceTxHash = /0x[0-9a-fA-F]{64}/.exec(msg)?.[0]?.toLowerCase();
+        if (!evidenceTxHash) {
+          logger.error(
+            { sub: sub.id },
+            "INVALID_IMAGE receipt did not expose an evaluation tx hash; refusing unaudited recovery"
+          );
+          continue;
+        }
+        try {
+          const before = (await gl.getOnchainSubmission(sub.id)) as {
+            unjudgeable_attempt_tx_hashes?: string[];
+          };
+          const alreadyRecorded = (before.unjudgeable_attempt_tx_hashes || [])
+            .map((hash) => hash.toLowerCase())
+            .includes(evidenceTxHash);
+          if (!alreadyRecorded) {
+            await gl.recordUnjudgeableAttemptOnChain(sub.id, evidenceTxHash);
+          }
+          const evidenceState = await gl.readSettled<{
+            status: string;
+            unjudgeable_attempt_count?: number;
+            unjudgeable_attempt_tx_hashes?: string[];
+          }>(
+            "get_submission",
+            [sub.id],
+            (v) => (v.unjudgeable_attempt_tx_hashes || [])
+              .map((hash) => hash.toLowerCase())
+              .includes(evidenceTxHash)
+          );
+          const attempts = Number(evidenceState.unjudgeable_attempt_count || 0);
+          if (attempts < MAX_INVALID_IMAGE_ATTEMPTS) {
             await prisma.submission.update({
               where: { id: sub.id },
               data: { invalidImageAttempts: attempts },
             });
-            logger.error(
-              { sub: sub.id, attempts, err: (terminalErr as Error).message },
-              "on-chain terminal disqualification failed; will retry"
+            logger.warn(
+              { sub: sub.id, attempts, evidenceTxHash },
+              "INVALID_IMAGE evidence committed on-chain; will retry next sweep"
             );
+            continue;
           }
-        } else {
+
+          const reason =
+            `Auto-disqualified after ${attempts} consecutive INVALID_IMAGE responses: ` +
+            `the validator runtime could not decode this entry as a judgeable meme.`;
+          await gl.disqualifyUnjudgeableSubmissionOnChain(sub.id, reason);
+          const terminal = await gl.readSettled<{ status: string; evaluation_summary?: string }>(
+            "get_submission",
+            [sub.id],
+            (v) => v.status === "disqualified"
+          );
+          if (terminal.status !== "disqualified") {
+            throw new Error("terminal disqualification did not settle");
+          }
           await prisma.submission.update({
             where: { id: sub.id },
-            data: { invalidImageAttempts: attempts },
+            data: {
+              status: "disqualified",
+              invalidImageAttempts: attempts,
+              evaluationSummary: terminal.evaluation_summary || reason,
+            },
           });
           logger.warn(
-            { sub: sub.id, attempts },
-            "INVALID_IMAGE from judge; will retry next sweep"
+            { sub: sub.id, attempts, evidenceTxHash },
+            "terminal INVALID_IMAGE disqualification confirmed with on-chain evidence"
+          );
+        } catch (terminalErr) {
+          // Never invent a terminal result in PostgreSQL. Keeping the row
+          // onchain makes the next sweep retry evidence/terminal settlement.
+          logger.error(
+            { sub: sub.id, err: (terminalErr as Error).message },
+            "on-chain INVALID_IMAGE evidence recovery failed; will retry"
           );
         }
         continue;

@@ -337,6 +337,18 @@ export async function disqualifyUnjudgeableSubmissionOnChain(
   );
 }
 
+/** Persist the failed evaluate transaction hash as auditable evidence. */
+export async function recordUnjudgeableAttemptOnChain(
+  submissionId: string,
+  evidenceTxHash: string
+): Promise<string> {
+  return writeAs(
+    await getOperatorClient(),
+    "record_unjudgeable_attempt",
+    [submissionId, evidenceTxHash]
+  );
+}
+
 export async function resolveDisputeOnChain(
   disputeId: string,
   resolvedAt: string
