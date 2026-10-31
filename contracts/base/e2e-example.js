@@ -23,6 +23,12 @@ async function main() {
   const competitionId = required("COMPETITION_ID");
   const unlockAt = BigInt(required("CHALLENGE_ENDS_AT_UNIX"));
   const amount = amountUnits("AMOUNT_USDC");
+  const now = BigInt(Math.floor(Date.now() / 1000));
+  if (unlockAt >= now) {
+    throw new Error(
+      "CHALLENGE_ENDS_AT_UNIX must be an already-passed GenLayer challenge deadline"
+    );
+  }
   const provider = new ethers.JsonRpcProvider(rpc);
   const host = new ethers.Wallet(required("HOST_PRIVATE_KEY"), provider);
   const relayer = new ethers.Wallet(required("RELAYER_PRIVATE_KEY"), provider);
@@ -57,15 +63,17 @@ async function main() {
     throw new Error("Allocation verification failed");
   }
 
-  const now = BigInt(Math.floor(Date.now() / 1000));
-  if (now < unlockAt) {
-    console.log(`allocation verified; claim is intentionally locked until ${unlockAt}`);
-    return;
-  }
+  const winnerBalanceBefore = await usdc.balanceOf(winner.address);
   const winnerEscrow = hostEscrow.connect(winner);
   const claim = await winnerEscrow.claim(key);
   await claim.wait();
+  const winnerBalanceAfter = await usdc.balanceOf(winner.address);
+  const remainingClaimable = await hostEscrow.getClaimable(key, winner.address);
+  if (winnerBalanceAfter - winnerBalanceBefore !== amount || remainingClaimable !== 0n) {
+    throw new Error("Claim verification failed: winner balance/claimable state mismatch");
+  }
   console.log("claimed:", claim.hash);
+  console.log("verified winner USDC increase:", amount.toString());
 }
 
 main().catch((error) => {

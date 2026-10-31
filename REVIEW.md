@@ -78,8 +78,8 @@ reads the transaction and escrow pool before the UI reports the prize funded.
 
 [`contracts/base/e2e-example.js`](contracts/base/e2e-example.js) demonstrates
 the complete Base Sepolia path: approve, deposit, allocate winners after the
-contract challenge deadline, claim, and verify pool/claimable state after each
-stage. Instructions are in
+already-passed contract challenge deadline, claim, and verify the pool,
+claimable state, and winner USDC balance increase. Instructions are in
 [`contracts/base/README.md`](contracts/base/README.md).
 
 ## 6. Verification and production evidence

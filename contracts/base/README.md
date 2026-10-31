@@ -75,9 +75,10 @@ MEME_OLYMPICS_ESCROW_ADDRESS=0x372582652fc0aa9407B426a8779ee92dA5859Cf8
 
 After finalization and the 24-hour challenge window, run the script below
 with testnet-only wallets and USDC. It funds a keyed pool, allocates a funded
-winner list, waits for the configured settlement timestamp, and then has the
-winner claim. The timestamp **must** be the `challenge_ends_at` returned by
-GenLayer for the competition — it is not a caller-selected release time.
+winner list using an already-passed challenge deadline, has the winner claim,
+and verifies both the exact USDC balance increase and zero remaining
+claimable balance. The timestamp **must** be the `challenge_ends_at` returned
+by GenLayer for the competition — it is not a caller-selected release time.
 
 ```bash
 cd backend
