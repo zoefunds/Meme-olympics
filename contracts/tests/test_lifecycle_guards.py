@@ -15,6 +15,7 @@ create_address = genlayer_test.create_address
 CONTRACT = Path(__file__).parents[1] / "meme_olympics.py"
 OWNER = create_address("owner")
 AUTHOR = create_address("author")
+MODERATOR = create_address("moderator")
 START = "2030-01-01T00:00:00+00:00"
 END = "2030-01-02T00:00:00+00:00"
 
@@ -71,6 +72,12 @@ def test_terminal_invalid_image_recovery_allows_finalization(arena):
         contract.record_unjudgeable_attempt("entry-guard", first)
     contract.record_unjudgeable_attempt("entry-guard", second)
     contract.record_unjudgeable_attempt("entry-guard", third)
+    contract.add_admin("0x" + MODERATOR.hex())
+    with vm.prank(MODERATOR):
+        with vm.expect_revert("Only owner may call this"):
+            contract.disqualify_unjudgeable_submission(
+                "entry-guard", "delegated admin must not decide this"
+            )
     contract.disqualify_unjudgeable_submission(
         "entry-guard", "Repeated INVALID_IMAGE after three validator attempts"
     )

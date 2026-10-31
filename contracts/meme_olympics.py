@@ -1372,11 +1372,11 @@ Return ONLY a JSON object exactly like:
 
     @gl.public.write
     def disqualify_unjudgeable_submission(self, submission_id: str, reason: str) -> None:
-        """Admin-only terminal recovery for an entry the AI runtime cannot
+        """Owner-only terminal recovery for an entry the AI runtime cannot
         decode after bounded retries. This is deliberately narrower than a
         general moderation endpoint: only a pending entry in a judging arena
         can transition, and the reason is persisted in the audit log/state."""
-        self._require_admin()
+        self._require_owner()
         sub = self._get_submission(submission_id)
         comp = self._get_competition(sub.competition_id)
         if comp.status != COMP_STATUS_JUDGING:
