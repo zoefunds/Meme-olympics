@@ -43,8 +43,10 @@ jobs:
       - run: npm ci
       - run: npm run build
         env:
-          NEXT_PUBLIC_API_URL: https://meme-olympics-api-v2-gideon.fly.dev
-          NEXT_PUBLIC_GENLAYER_CONTRACT_ADDRESS: 0xC91AA2316235D6a1cCd6804Ad1cC85D29E6F14ea
+          NEXT_PUBLIC_API_URL: "https://meme-olympics-api-v2-gideon.fly.dev"
+          # Quote hex addresses: otherwise YAML treats them as integers and
+          # GitHub rejects the workflow before creating any jobs.
+          NEXT_PUBLIC_GENLAYER_CONTRACT_ADDRESS: "0xC91AA2316235D6a1cCd6804Ad1cC85D29E6F14ea"
 
   genlayer-contract:
     runs-on: ubuntu-latest
